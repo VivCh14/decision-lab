@@ -20,7 +20,12 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
-from dhub.cli.config import build_headers, get_api_url, get_optional_token, raise_for_status
+from dhub.cli.config import (
+    build_headers,
+    get_api_url,
+    get_optional_token,
+    raise_for_status,
+)
 import httpx
 import yaml
 
@@ -33,7 +38,16 @@ def _load_bundled_models() -> dict[str, Any]:
 
 _BUNDLED: dict[str, Any] = _load_bundled_models()
 KNOWN_MODELS: list[str] = _BUNDLED["models"]
-KNOWN_PROVIDER_ENVS: dict[str, list[str]] = _BUNDLED["provider_envs"]
+# models.dev's fetch omits github-copilot-enterprise from provider_envs even
+# though it lists github-copilot-enterprise/* models; this survives the
+# auto-refresh in scripts/refresh_models_json.py since it isn't in the bundle.
+SUPPLEMENTAL_PROVIDER_ENVS: dict[str, list[str]] = {
+    "github-copilot-enterprise": ["GITHUB_TOKEN"],
+}
+KNOWN_PROVIDER_ENVS: dict[str, list[str]] = {
+    **SUPPLEMENTAL_PROVIDER_ENVS,
+    **_BUNDLED["provider_envs"],
+}
 
 CACHE_DIR: Path = Path.home() / ".cache" / "dlab"
 MODEL_CACHE_FILE: Path = CACHE_DIR / "models.json"
@@ -127,9 +141,15 @@ def refresh_model_cache_if_stale(
         The started refresh thread, or None if no refresh was needed.
     """
     now: float = time.time()
-    if cache_file.exists() and now - cache_file.stat().st_mtime < MODEL_CACHE_TTL_SECONDS:
+    if (
+        cache_file.exists()
+        and now - cache_file.stat().st_mtime < MODEL_CACHE_TTL_SECONDS
+    ):
         return None
-    if attempt_file.exists() and now - attempt_file.stat().st_mtime < MODEL_REFRESH_RETRY_SECONDS:
+    if (
+        attempt_file.exists()
+        and now - attempt_file.stat().st_mtime < MODEL_REFRESH_RETRY_SECONDS
+    ):
         return None
 
     attempt_file.parent.mkdir(parents=True, exist_ok=True)
@@ -171,7 +191,8 @@ def resolve_latest_opencode_version() -> str:
     """
     try:
         resp: httpx.Response = httpx.get(
-            "https://registry.npmjs.org/opencode-ai/latest", timeout=10,
+            "https://registry.npmjs.org/opencode-ai/latest",
+            timeout=10,
         )
         resp.raise_for_status()
         version: str = str(resp.json().get("version", ""))
@@ -265,44 +286,69 @@ HIGH_IMPACT_PERMISSION_COUNT: int = 5
 
 CONFIGURABLE_PERMISSIONS: list[tuple[str, str, str, str]] = [
     # --- High-impact (affect agent capabilities) ---
-    ("webfetch", "Fetch URLs",
-     "Fetch content from URLs. Useful for downloading data, reading documentation, "
-     "or accessing APIs.",
-     "allow"),
-    ("websearch", "Web search",
-     "Search the web. Useful for finding documentation, examples, or troubleshooting errors.",
-     "allow"),
-    ("bash", "Shell commands",
-     "Run bash commands. Needed for pip install, running scripts, data processing. "
-     "Disable to restrict the agent to file operations only.",
-     "allow"),
-    ("edit", "Edit files",
-     "Create and modify files in /workspace. Disable for read-only analysis agents.",
-     "allow"),
-    ("external_directory", "External directory access",
-     "Read files outside /workspace (e.g. Python site-packages, system configs). "
-     "Useful for exploring installed libraries programmatically.",
-     "allow"),
+    (
+        "webfetch",
+        "Fetch URLs",
+        "Fetch content from URLs. Useful for downloading data, reading documentation, "
+        "or accessing APIs.",
+        "allow",
+    ),
+    (
+        "websearch",
+        "Web search",
+        "Search the web. Useful for finding documentation, examples, or troubleshooting errors.",
+        "allow",
+    ),
+    (
+        "bash",
+        "Shell commands",
+        "Run bash commands. Needed for pip install, running scripts, data processing. "
+        "Disable to restrict the agent to file operations only.",
+        "allow",
+    ),
+    (
+        "edit",
+        "Edit files",
+        "Create and modify files in /workspace. Disable for read-only analysis agents.",
+        "allow",
+    ),
+    (
+        "external_directory",
+        "External directory access",
+        "Read files outside /workspace (e.g. Python site-packages, system configs). "
+        "Useful for exploring installed libraries programmatically.",
+        "allow",
+    ),
     # NB: `task` is intentionally NOT here — it is hardcoded to allow, because
     # denying it silently breaks parallel-agents/subagent workflows (issue #47).
     # --- Internal/basic (rarely need to change) ---
-    ("skill", "Use skills",
-     "Let the agent use opencode skills (knowledge files). "
-     "Disable if the agent should rely only on its system prompt.",
-     "allow"),
-    ("codesearch", "Code search",
-     "Semantic code search across the codebase.",
-     "allow"),
-    ("lsp", "Language server",
-     "Query language servers for code intelligence (definitions, references, hover). "
-     "Requires configured LSP servers in the container.",
-     "deny"),
-    ("todoread", "Read todos",
-     "Read the internal task/todo list. Used by the agent to track its own progress.",
-     "allow"),
-    ("todowrite", "Write todos",
-     "Write to the internal task/todo list. Used by the agent to plan multi-step work.",
-     "allow"),
+    (
+        "skill",
+        "Use skills",
+        "Let the agent use opencode skills (knowledge files). "
+        "Disable if the agent should rely only on its system prompt.",
+        "allow",
+    ),
+    ("codesearch", "Code search", "Semantic code search across the codebase.", "allow"),
+    (
+        "lsp",
+        "Language server",
+        "Query language servers for code intelligence (definitions, references, hover). "
+        "Requires configured LSP servers in the container.",
+        "deny",
+    ),
+    (
+        "todoread",
+        "Read todos",
+        "Read the internal task/todo list. Used by the agent to track its own progress.",
+        "allow",
+    ),
+    (
+        "todowrite",
+        "Write todos",
+        "Write to the internal task/todo list. Used by the agent to plan multi-step work.",
+        "allow",
+    ),
 ]
 
 # Permissions always set to the same value (not shown in wizard).
@@ -315,7 +361,7 @@ HARDCODED_PERMISSIONS: dict[str, str] = {
     # agents / subagents needs `task`, and denying it silently breaks the
     # parallel-agents workflow. Harmless when unused (issue #47).
     "task": "allow",
-    "question": "deny",   # meaningless in automated mode
+    "question": "deny",  # meaningless in automated mode
     # TODO: decide on doom_loop default. OpenCode defaults to "ask" (auto-approved
     # in run mode). Setting "deny" would stop agents stuck in loops but might block
     # legitimate retries. Leaving it out for now to use OpenCode's default.
@@ -325,6 +371,7 @@ HARDCODED_PERMISSIONS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
+
 
 def validate_dpack_name(name: str) -> str | None:
     """
@@ -391,6 +438,7 @@ def filter_models(query: str, models: list[str] | None = None) -> list[str]:
 # ---------------------------------------------------------------------------
 # Decision Hub API helpers
 # ---------------------------------------------------------------------------
+
 
 def _dhub_headers() -> dict[str, str]:
     """Build Decision Hub API headers using dhub-cli config."""
@@ -503,6 +551,7 @@ def download_skill(org: str, name: str, dest: Path) -> Path:
 # File content generators
 # ---------------------------------------------------------------------------
 
+
 def _build_config_yaml(config: dict[str, Any]) -> str:
     """Build config.yaml content."""
     data: dict[str, Any] = {
@@ -553,45 +602,55 @@ def _build_dockerfile(config: dict[str, Any]) -> str:
     python_lib: bool = config.get("python_lib", False)
     python_lib_name: str = config.get("python_lib_name", "")
     modal_integration: bool = config.get("modal_integration", False)
-    base_image: str = config.get("base_image", PACKAGE_MANAGER_BASE_IMAGES.get(pkg_mgr, "python:3.11-slim"))
+    base_image: str = config.get(
+        "base_image", PACKAGE_MANAGER_BASE_IMAGES.get(pkg_mgr, "python:3.11-slim")
+    )
 
     lines: list[str] = [f"FROM {base_image}", "", "WORKDIR /workspace", ""]
 
     if pkg_mgr == "conda":
-        lines.extend([
-            "COPY environment.yml /tmp/environment.yml",
-            "RUN conda env update -n base -f /tmp/environment.yml && \\",
-            "    conda clean -afy",
-            "",
-        ])
+        lines.extend(
+            [
+                "COPY environment.yml /tmp/environment.yml",
+                "RUN conda env update -n base -f /tmp/environment.yml && \\",
+                "    conda clean -afy",
+                "",
+            ]
+        )
     elif pkg_mgr == "uv":
-        lines.extend([
-            "COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv",
-            "COPY requirements.txt /tmp/requirements.txt",
-            "RUN uv pip install --system --no-cache -r /tmp/requirements.txt",
-            "",
-        ])
+        lines.extend(
+            [
+                "COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv",
+                "COPY requirements.txt /tmp/requirements.txt",
+                "RUN uv pip install --system --no-cache -r /tmp/requirements.txt",
+                "",
+            ]
+        )
     elif pkg_mgr == "pixi":
-        lines.extend([
-            "RUN apt-get update && apt-get install -y curl && \\",
-            "    curl -fsSL https://pixi.sh/install.sh | bash && \\",
-            "    rm -rf /var/lib/apt/lists/*",
-            "",
-            "# The installer puts pixi in /root/.pixi/bin and only updates .bashrc,",
-            "# which RUN steps don't source — PATH must be set before `pixi install`",
-            'ENV PATH="/opt/pixi/.pixi/envs/default/bin:/root/.pixi/bin:$PATH"',
-            "",
-            "# Install pixi packages to /opt/pixi (not /workspace, which gets volume-mounted)",
-            "COPY pixi.toml /opt/pixi/pixi.toml",
-            "RUN cd /opt/pixi && pixi install",
-            "",
-        ])
+        lines.extend(
+            [
+                "RUN apt-get update && apt-get install -y curl && \\",
+                "    curl -fsSL https://pixi.sh/install.sh | bash && \\",
+                "    rm -rf /var/lib/apt/lists/*",
+                "",
+                "# The installer puts pixi in /root/.pixi/bin and only updates .bashrc,",
+                "# which RUN steps don't source — PATH must be set before `pixi install`",
+                'ENV PATH="/opt/pixi/.pixi/envs/default/bin:/root/.pixi/bin:$PATH"',
+                "",
+                "# Install pixi packages to /opt/pixi (not /workspace, which gets volume-mounted)",
+                "COPY pixi.toml /opt/pixi/pixi.toml",
+                "RUN cd /opt/pixi && pixi install",
+                "",
+            ]
+        )
     else:  # pip
-        lines.extend([
-            "COPY requirements.txt /tmp/requirements.txt",
-            "RUN pip install --no-cache-dir -r /tmp/requirements.txt",
-            "",
-        ])
+        lines.extend(
+            [
+                "COPY requirements.txt /tmp/requirements.txt",
+                "RUN pip install --no-cache-dir -r /tmp/requirements.txt",
+                "",
+            ]
+        )
 
     # Optional: python lib and modal app
     pythonpath_parts: list[str] = []
@@ -623,7 +682,9 @@ def _build_env_file(config: dict[str, Any]) -> tuple[str, str]:
         ("requirements.txt", "...").
     """
     pkg_mgr: str = config.get("package_manager", "pip")
-    docker_image_name: str = config.get("docker_image_name", f"dlab-{config.get('name', 'dpack')}")
+    docker_image_name: str = config.get(
+        "docker_image_name", f"dlab-{config.get('name', 'dpack')}"
+    )
     modal: bool = config.get("modal_integration", False)
     dhub: bool = config.get("dhub_integration", False)
 
@@ -658,6 +719,7 @@ def _build_env_file(config: dict[str, Any]) -> tuple[str, str]:
             pypi_lines: str = "\n".join(f'{p} = "*"' for p in pip_pkgs)
             pypi_section = f"\n[pypi-dependencies]\n{pypi_lines}\n"
         import platform
+
         machine: str = platform.machine()
         if machine == "aarch64" or machine == "arm64":
             pixi_platform: str = "linux-aarch64"
@@ -681,12 +743,7 @@ def _build_env_file(config: dict[str, Any]) -> tuple[str, str]:
 
     # pip or uv
     pip_lines_str: str = "\n".join(pip_pkgs) + "\n" if pip_pkgs else ""
-    content = (
-        f"{pip_lines_str}"
-        "# Add your pip packages here\n"
-        "# numpy\n"
-        "# pandas\n"
-    )
+    content = f"{pip_lines_str}# Add your pip packages here\n# numpy\n# pandas\n"
     return ("requirements.txt", content)
 
 
@@ -719,7 +776,9 @@ def _build_agent_md(config: dict[str, Any]) -> str:
     parallel: bool = skeletons.get("parallel_agents", False)
     subagents: bool = skeletons.get("subagents", False)
 
-    tools_block: str = "  # Tool settings here override the permission rules in opencode.json\n"
+    tools_block: str = (
+        "  # Tool settings here override the permission rules in opencode.json\n"
+    )
     if parallel:
         tools_block += "  parallel-agents: true"
     elif subagents:
@@ -771,7 +830,9 @@ You can also override models per instance:
 Use the `task` tool to delegate work to the "example-worker" subagent.
 Rename and customize `opencode/agents/example-worker.md` for your use case."""
 
-    description: str = config.get("agent_description", f"Main orchestrator for {config['name']}")
+    description: str = config.get(
+        "agent_description", f"Main orchestrator for {config['name']}"
+    )
 
     return f"""---
 description: {description}
@@ -820,6 +881,7 @@ summarizer_prompt: |
 summarizer_model: "anthropic/claude-sonnet-4-5"
 """
 
+
 def _build_deploy_modal_sh() -> str:
     """Build the deploy_modal.sh hook script.
 
@@ -846,19 +908,22 @@ def _build_deploy_modal_sh() -> str:
         "fi",
         "",
     ]
-    lines.extend([
-        'MODAL_APP="/opt/modal_app/example.py"',
-        "",
-        'if [ -f "$MODAL_APP" ]; then',
-        '    echo "Deploying Modal app..."',
-        '    modal deploy "$MODAL_APP"',
-        '    echo "Modal app deployed."',
-        "else",
-        '    echo "Warning: Modal app not found at $MODAL_APP, skipping deploy"',
-        "fi",
-        "",
-    ])
+    lines.extend(
+        [
+            'MODAL_APP="/opt/modal_app/example.py"',
+            "",
+            'if [ -f "$MODAL_APP" ]; then',
+            '    echo "Deploying Modal app..."',
+            '    modal deploy "$MODAL_APP"',
+            '    echo "Modal app deployed."',
+            "else",
+            '    echo "Warning: Modal app not found at $MODAL_APP, skipping deploy"',
+            "fi",
+            "",
+        ]
+    )
     return "\n".join(lines)
+
 
 def _build_modal_example(dpack_name: str, package_manager: str) -> str:
     """Build the Modal example.py content.
@@ -874,38 +939,38 @@ def _build_modal_example(dpack_name: str, package_manager: str) -> str:
     """
     if package_manager == "conda":
         image_block = (
-            '# Conda packages — use micromamba for properly linked BLAS, MKL, etc.\n'
-            'CONDA_PACKAGES = [\n'
+            "# Conda packages — use micromamba for properly linked BLAS, MKL, etc.\n"
+            "CONDA_PACKAGES = [\n"
             '    "python=3.11",\n'
-            '    # Add your conda packages here\n'
+            "    # Add your conda packages here\n"
             '    # "numpy",\n'
             '    # "pandas",\n'
-            ']\n'
-            '\n'
-            '# Packages that need pip (not on conda-forge or need specific versions)\n'
-            'PIP_PACKAGES = [\n'
+            "]\n"
+            "\n"
+            "# Packages that need pip (not on conda-forge or need specific versions)\n"
+            "PIP_PACKAGES = [\n"
             '    # "some-pip-only-package",\n'
-            ']\n'
-            '\n'
-            'image = (\n'
+            "]\n"
+            "\n"
+            "image = (\n"
             '    modal.Image.micromamba(python_version="3.11")\n'
-            '    .run_commands(f"echo \'modal_app hash: {_modal_app_hash}\'")'
-            '  # Cache buster\n'
+            "    .run_commands(f\"echo 'modal_app hash: {_modal_app_hash}'\")"
+            "  # Cache buster\n"
             '    .micromamba_install(*CONDA_PACKAGES, channels=["conda-forge"])\n'
-            '    .pip_install(*PIP_PACKAGES)\n'
-            ')'
+            "    .pip_install(*PIP_PACKAGES)\n"
+            ")"
         )
     else:
         image_block = (
-            'image = (\n'
+            "image = (\n"
             '    modal.Image.debian_slim(python_version="3.11")\n'
-            '    .run_commands(f"echo \'modal_app hash: {_modal_app_hash}\'")'
-            '  # Cache buster\n'
-            '    .pip_install(\n'
-            '        # Add your packages here\n'
+            "    .run_commands(f\"echo 'modal_app hash: {_modal_app_hash}'\")"
+            "  # Cache buster\n"
+            "    .pip_install(\n"
+            "        # Add your packages here\n"
             '        "numpy",\n'
-            '    )\n'
-            ')'
+            "    )\n"
+            ")"
         )
 
     return f'''"""
@@ -944,6 +1009,7 @@ def run_compute(data: dict) -> dict:
     """Example compute function. Replace with your own logic."""
     return {{"status": "done", "input_keys": list(data.keys())}}
 '''
+
 
 RUN_ON_MODAL_TS: str = """import { tool } from "@opencode-ai/plugin"
 
@@ -1015,6 +1081,7 @@ or other context that helps the agent do its job better.
 # Main generator
 # ---------------------------------------------------------------------------
 
+
 def generate_dpack(
     output_dir: Path,
     config: dict[str, Any],
@@ -1054,7 +1121,9 @@ def generate_dpack(
     config.setdefault("docker_image_name", f"dlab-{name}")
     config.setdefault("package_manager", "pip")
     pkg_mgr: str = config["package_manager"]
-    config.setdefault("base_image", PACKAGE_MANAGER_BASE_IMAGES.get(pkg_mgr, "python:3.11-slim"))
+    config.setdefault(
+        "base_image", PACKAGE_MANAGER_BASE_IMAGES.get(pkg_mgr, "python:3.11-slim")
+    )
     config.setdefault("default_model", "opencode/big-pickle")
     config.setdefault("requires_data", True)
     config.setdefault("requires_prompt", True)
@@ -1119,9 +1188,7 @@ def generate_dpack(
             (modal_dir / "example.py").write_text(
                 _build_modal_example(name, config["package_manager"])
             )
-            (dpack_dir / "deploy_modal.sh").write_text(
-                _build_deploy_modal_sh()
-            )
+            (dpack_dir / "deploy_modal.sh").write_text(_build_deploy_modal_sh())
 
         _progress("Writing opencode config...")
         (opencode_dir / "opencode.json").write_text(_build_opencode_json(config))
@@ -1129,7 +1196,9 @@ def generate_dpack(
         agent_name: str = config["agent_name"]
         (agents_dir / f"{agent_name}.md").write_text(_build_agent_md(config))
 
-        has_subagents: bool = skeletons.get("subagents", False) or skeletons.get("parallel_agents", False)
+        has_subagents: bool = skeletons.get("subagents", False) or skeletons.get(
+            "parallel_agents", False
+        )
         if has_subagents:
             (agents_dir / "example-worker.md").write_text(EXAMPLE_WORKER_MD)
 

@@ -26,18 +26,40 @@ STATE_FILE: str = ".state.json"
 # shell (issue #56). This is the authoritative allowlist; parallel-agents.ts
 # reads it and filters process.env accordingly.
 INSTANCE_ENV_EXACT: list[str] = [
-    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE",
-    "TERM", "TMPDIR", "TMP", "TEMP", "PWD", "SHELL",
-    "PYTHONPATH", "PYTHONUNBUFFERED", "NODE_PATH",
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "PWD",
+    "SHELL",
+    "PYTHONPATH",
+    "PYTHONUNBUFFERED",
+    "NODE_PATH",
     "MATPLOTLIBRC",
-    "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "CURL_CA_BUNDLE",
+    "REQUESTS_CA_BUNDLE",
 ]
 # Prefixes whose variables are always forwarded: dlab config (dpacks rely on
 # DLAB_* forwarding), opencode's own config, and cloud-provider credential
 # families whose names do not end in _API_KEY (AWS/Azure/Vertex/etc.).
 INSTANCE_ENV_PREFIXES: list[str] = [
-    "DLAB_", "OPENCODE_", "AWS_", "AZURE_", "GOOGLE_", "VERTEX_",
-    "CLOUDFLARE_", "GITHUB_",
+    "DLAB_",
+    "OPENCODE_",
+    "AWS_",
+    "AZURE_",
+    "GOOGLE_",
+    "VERTEX_",
+    "CLOUDFLARE_",
+    "GITHUB_",
 ]
 
 
@@ -225,6 +247,7 @@ def setup_opencode_config(
     env_file: str | None = None,
     no_sandboxing: bool = False,
     dpack_config: dict[str, Any] | None = None,
+    opencode_data_dir: str | None = None,
 ) -> list[str]:
     """
     Set up opencode configuration in work directory.
@@ -249,6 +272,9 @@ def setup_opencode_config(
     dpack_config : dict[str, Any] | None
         Loaded decision-pack config. When provided, forecaster and consolidator
         models from config.yaml are injected into parallel agent YAML files.
+    opencode_data_dir : str | None
+        Host directory with OpenCode OAuth credentials, if any. Providers
+        authenticated there are treated as available, same as an env var.
 
     Returns
     -------
@@ -260,7 +286,8 @@ def setup_opencode_config(
     opencode_dest: Path = Path(work_dir) / ".opencode"
     if dpack_config is not None:
         apply_model_roles_to_opencode(
-            str(opencode_dest), resolve_model_roles(dpack_config),
+            str(opencode_dest),
+            resolve_model_roles(dpack_config),
         )
 
     # Install the decision-lab figure style (matplotlibrc + dlab_plotstyle
@@ -272,7 +299,11 @@ def setup_opencode_config(
     messages: list[str] = []
     if orchestrator_model:
         messages = process_opencode_dir(
-            str(opencode_dest), orchestrator_model, env_file, no_sandboxing,
+            str(opencode_dest),
+            orchestrator_model,
+            env_file,
+            no_sandboxing,
+            opencode_data_dir,
         )
 
     # Generate parallel-agents.ts if decision-pack has parallel_agents/ configs
@@ -355,6 +386,7 @@ def create_session(
     orchestrator_model: str | None = None,
     env_file: str | None = None,
     no_sandboxing: bool = False,
+    opencode_data_dir: str | None = None,
 ) -> dict[str, Any]:
     """
     Create a new session with work directory.
@@ -375,6 +407,8 @@ def create_session(
         Path to .env file for checking available provider keys.
     no_sandboxing : bool
         If True, also check os.environ for API keys.
+    opencode_data_dir : str | None
+        Host directory with OpenCode OAuth credentials, if any.
 
     Returns
     -------
@@ -425,8 +459,13 @@ def create_session(
                 copy_data_to_workdir(data_dir, str(work_path))
 
         fallback_messages: list[str] = setup_opencode_config(
-            config["config_dir"], str(work_path), orchestrator_model, env_file,
-            no_sandboxing, dpack_config=config,
+            config["config_dir"],
+            str(work_path),
+            orchestrator_model,
+            env_file,
+            no_sandboxing,
+            dpack_config=config,
+            opencode_data_dir=opencode_data_dir,
         )
         copy_hook_scripts(config, str(work_path))
     except Exception:

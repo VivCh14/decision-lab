@@ -7,6 +7,8 @@ from dlab.model_fallback import (
     apply_model_fallback,
     find_model_strings,
     get_available_providers,
+    get_oauth_authenticated_providers,
+    get_oauth_env_overrides,
     parse_env_file,
     preflight_check,
     process_opencode_dir,
@@ -154,7 +156,9 @@ class TestPreflightCheck:
         env_file.write_text("OPENAI_API_KEY=sk-123\n")
 
         errors, warnings = preflight_check(
-            "anthropic/claude-opus-4-5", str(dpack), str(env_file),
+            "anthropic/claude-opus-4-5",
+            str(dpack),
+            str(env_file),
         )
         assert len(errors) == 1
         assert "ANTHROPIC_API_KEY" in errors[0]
@@ -166,7 +170,9 @@ class TestPreflightCheck:
         env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
 
         errors, warnings = preflight_check(
-            "anthropic/claude-opus-4-5", str(dpack), str(env_file),
+            "anthropic/claude-opus-4-5",
+            str(dpack),
+            str(env_file),
         )
         assert errors == []
 
@@ -176,7 +182,9 @@ class TestPreflightCheck:
         env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
 
         errors, warnings = preflight_check(
-            "anthropic/claude-opus-4-5", str(dpack), str(env_file),
+            "anthropic/claude-opus-4-5",
+            str(dpack),
+            str(env_file),
         )
         assert any("anthropic/claude-sonet-4" in e for e in errors)
         assert any("did you mean" in e for e in errors)
@@ -187,7 +195,9 @@ class TestPreflightCheck:
         env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
 
         errors, warnings = preflight_check(
-            "anthropic/claude-sonet-4", str(dpack), str(env_file),
+            "anthropic/claude-sonet-4",
+            str(dpack),
+            str(env_file),
         )
         assert len(errors) == 1
         assert "anthropic/claude-sonet-4" in errors[0]
@@ -197,14 +207,14 @@ class TestPreflightCheck:
         dpack: Path = tmp_path / "dpack"
         pa_dir: Path = dpack / "opencode" / "parallel_agents"
         pa_dir.mkdir(parents=True)
-        (pa_dir / "poet.yaml").write_text(
-            'default_model: "google/gemini-2.0-flash"\n'
-        )
+        (pa_dir / "poet.yaml").write_text('default_model: "google/gemini-2.0-flash"\n')
         env_file: Path = tmp_path / ".env"
         env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
 
         errors, warnings = preflight_check(
-            "anthropic/claude-opus-4-5", str(dpack), str(env_file),
+            "anthropic/claude-opus-4-5",
+            str(dpack),
+            str(env_file),
         )
         assert errors == []
         assert len(warnings) >= 1
@@ -223,7 +233,9 @@ class TestPreflightCheck:
         env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
 
         errors, warnings = preflight_check(
-            "anthropic/claude-opus-4-5", str(dpack), str(env_file),
+            "anthropic/claude-opus-4-5",
+            str(dpack),
+            str(env_file),
         )
         assert errors == []
         assert warnings == []
@@ -232,7 +244,9 @@ class TestPreflightCheck:
         dpack: Path = self._make_dpack(tmp_path, "Use anthropic/claude-opus-4-5")
 
         errors, warnings = preflight_check(
-            "anthropic/claude-opus-4-5", str(dpack), None,
+            "anthropic/claude-opus-4-5",
+            str(dpack),
+            None,
         )
         assert len(errors) == 1
         assert "ANTHROPIC_API_KEY" in errors[0]
@@ -250,7 +264,9 @@ class TestPreflightCheck:
         env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
 
         errors, warnings = preflight_check(
-            "anthropic/claude-opus-4-5", str(dpack), str(env_file),
+            "anthropic/claude-opus-4-5",
+            str(dpack),
+            str(env_file),
         )
         # Only one warning for google/gemini-2.0-flash, not two
         google_warnings: list[str] = [
@@ -274,10 +290,103 @@ class TestPreflightCheck:
         env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
 
         errors, warnings = preflight_check(
-            "anthropic/claude-opus-4-5", str(dpack), str(env_file),
+            "anthropic/claude-opus-4-5",
+            str(dpack),
+            str(env_file),
         )
         assert errors == []
         assert any("google/gemini-2.0-flash" in w for w in warnings)
+
+    def test_oauth_provider_satisfies_orchestrator_key(self, tmp_path: Path) -> None:
+        dpack: Path = self._make_dpack(
+            tmp_path,
+            "Use github-copilot-enterprise/gpt-5.4-mini",
+        )
+        opencode_data_dir: Path = tmp_path / "oauth-data"
+        opencode_data_dir.mkdir()
+        (opencode_data_dir / "auth.json").write_text(
+            '{"github-copilot-enterprise": {"type": "oauth"}}'
+        )
+
+        errors, warnings = preflight_check(
+            "github-copilot-enterprise/gpt-5.4-mini",
+            str(dpack),
+            None,
+            opencode_data_dir=str(opencode_data_dir),
+        )
+        assert errors == []
+
+    def test_oauth_provider_satisfies_agent_fallback_warning(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        dpack: Path = tmp_path / "dpack"
+        pa_dir: Path = dpack / "opencode" / "parallel_agents"
+        pa_dir.mkdir(parents=True)
+        (pa_dir / "agent.yaml").write_text(
+            'default_model: "github-copilot-enterprise/gpt-5.4-mini"\n'
+        )
+        env_file: Path = tmp_path / ".env"
+        env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
+        opencode_data_dir: Path = tmp_path / "oauth-data"
+        opencode_data_dir.mkdir()
+        (opencode_data_dir / "auth.json").write_text(
+            '{"github-copilot-enterprise": {"type": "oauth"}}'
+        )
+
+        errors, warnings = preflight_check(
+            "anthropic/claude-opus-4-5",
+            str(dpack),
+            str(env_file),
+            opencode_data_dir=str(opencode_data_dir),
+        )
+        assert errors == []
+        assert warnings == []
+
+
+class TestGetOAuthAuthenticatedProviders:
+    """Tests for get_oauth_authenticated_providers()."""
+
+    def test_none_returns_empty(self) -> None:
+        assert get_oauth_authenticated_providers(None) == set()
+
+    def test_missing_dir_returns_empty(self, tmp_path: Path) -> None:
+        assert get_oauth_authenticated_providers(str(tmp_path / "nope")) == set()
+
+    def test_missing_auth_json_returns_empty(self, tmp_path: Path) -> None:
+        assert get_oauth_authenticated_providers(str(tmp_path)) == set()
+
+    def test_reads_top_level_keys(self, tmp_path: Path) -> None:
+        (tmp_path / "auth.json").write_text(
+            '{"github-copilot-enterprise": {"type": "oauth"}}'
+        )
+        result: set[str] = get_oauth_authenticated_providers(str(tmp_path))
+        assert result == {"github-copilot-enterprise"}
+
+    def test_invalid_json_returns_empty(self, tmp_path: Path) -> None:
+        (tmp_path / "auth.json").write_text("not json")
+        assert get_oauth_authenticated_providers(str(tmp_path)) == set()
+
+
+class TestGetOAuthEnvOverrides:
+    """Tests for get_oauth_env_overrides()."""
+
+    def test_none_returns_empty(self) -> None:
+        assert get_oauth_env_overrides(None) == {}
+
+    def test_authenticated_provider_blanks_its_vars(self, tmp_path: Path) -> None:
+        (tmp_path / "auth.json").write_text(
+            '{"github-copilot-enterprise": {"type": "oauth"}}'
+        )
+        result: dict[str, str] = get_oauth_env_overrides(str(tmp_path))
+        assert result == {"GITHUB_TOKEN": ""}
+
+    def test_unauthenticated_provider_produces_no_overrides(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        (tmp_path / "auth.json").write_text("{}")
+        assert get_oauth_env_overrides(str(tmp_path)) == {}
 
 
 class TestApplyModelFallback:
@@ -286,7 +395,9 @@ class TestApplyModelFallback:
     def test_no_unavailable_providers(self) -> None:
         text: str = 'default_model: "anthropic/claude-sonnet-4-5"\n'
         new_text, replacements = apply_model_fallback(
-            text, "anthropic/claude-opus-4-5", set(),
+            text,
+            "anthropic/claude-opus-4-5",
+            set(),
         )
         assert new_text == text
         assert replacements == []
@@ -294,7 +405,9 @@ class TestApplyModelFallback:
     def test_replaces_unavailable_provider(self) -> None:
         text: str = 'default_model: "google/gemini-2.5-pro"\n'
         new_text, replacements = apply_model_fallback(
-            text, "anthropic/claude-opus-4-5", {"google"},
+            text,
+            "anthropic/claude-opus-4-5",
+            {"google"},
         )
         assert "anthropic/claude-opus-4-5" in new_text
         assert "google/gemini-2.5-pro" not in new_text
@@ -306,7 +419,9 @@ class TestApplyModelFallback:
             summarizer_model: "google/gemini-2.5-pro"
         """)
         new_text, replacements = apply_model_fallback(
-            text, "anthropic/claude-opus-4-5", {"google"},
+            text,
+            "anthropic/claude-opus-4-5",
+            {"google"},
         )
         assert "anthropic/claude-sonnet-4-5" in new_text
         assert "anthropic/claude-opus-4-5" in new_text
@@ -318,7 +433,9 @@ class TestApplyModelFallback:
             summarizer_model: "google/gemini-2.0-flash"
         """)
         new_text, replacements = apply_model_fallback(
-            text, "anthropic/claude-opus-4-5", {"google"},
+            text,
+            "anthropic/claude-opus-4-5",
+            {"google"},
         )
         assert "google/" not in new_text
         assert len(replacements) == 2
@@ -326,7 +443,9 @@ class TestApplyModelFallback:
     def test_replaces_in_markdown_body(self) -> None:
         text: str = 'Use model "google/gemini-2.5-pro" for analysis.\n'
         new_text, replacements = apply_model_fallback(
-            text, "anthropic/claude-opus-4-5", {"google"},
+            text,
+            "anthropic/claude-opus-4-5",
+            {"google"},
         )
         assert 'Use model "anthropic/claude-opus-4-5" for analysis.\n' == new_text
         assert len(replacements) == 1
@@ -339,7 +458,9 @@ class TestApplyModelFallback:
             Check openai/spec.yaml
         """)
         new_text, replacements = apply_model_fallback(
-            text, "anthropic/claude-opus-4-5", {"google", "anthropic", "openai"},
+            text,
+            "anthropic/claude-opus-4-5",
+            {"google", "anthropic", "openai"},
         )
         assert "anthropic/report.md" in new_text
         assert "openai/spec.yaml" in new_text
@@ -423,7 +544,9 @@ class TestProcessOpencodeDir:
 
     def test_nonexistent_dir(self, tmp_path: Path) -> None:
         result: list[str] = process_opencode_dir(
-            str(tmp_path / "nope"), "anthropic/claude-opus-4-5", None,
+            str(tmp_path / "nope"),
+            "anthropic/claude-opus-4-5",
+            None,
         )
         assert result == []
 
@@ -438,7 +561,9 @@ class TestProcessOpencodeDir:
         env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
 
         result: list[str] = process_opencode_dir(
-            str(opencode_dir), "anthropic/claude-opus-4-5", str(env_file),
+            str(opencode_dir),
+            "anthropic/claude-opus-4-5",
+            str(env_file),
         )
         content: str = (pa_dir / "agent.yaml").read_text()
         assert "anthropic/claude-sonnet-4-5" in content
@@ -456,7 +581,9 @@ class TestProcessOpencodeDir:
         env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
 
         result: list[str] = process_opencode_dir(
-            str(opencode_dir), "anthropic/claude-opus-4-5", str(env_file),
+            str(opencode_dir),
+            "anthropic/claude-opus-4-5",
+            str(env_file),
         )
         content: str = (pa_dir / "agent.yaml").read_text()
         assert "google/" not in content
@@ -469,18 +596,22 @@ class TestProcessOpencodeDir:
         opencode_dir: Path = tmp_path / ".opencode"
         agents_dir: Path = opencode_dir / "agents"
         agents_dir.mkdir(parents=True)
-        (agents_dir / "orchestrator.md").write_text(textwrap.dedent("""\
+        (agents_dir / "orchestrator.md").write_text(
+            textwrap.dedent("""\
             ---
             mode: primary
             model: google/gemini-2.5-pro
             ---
             Example call: parallel-agents with "google/gemini-2.5-pro".
-        """))
+        """)
+        )
         env_file: Path = tmp_path / ".env"
         env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
 
         result: list[str] = process_opencode_dir(
-            str(opencode_dir), "anthropic/claude-opus-4-5", str(env_file),
+            str(opencode_dir),
+            "anthropic/claude-opus-4-5",
+            str(env_file),
         )
         content: str = (agents_dir / "orchestrator.md").read_text()
         # Frontmatter model was replaced ...
@@ -495,7 +626,9 @@ class TestProcessOpencodeDir:
         env_file.write_text("OPENAI_API_KEY=sk-123\n")
 
         result: list[str] = process_opencode_dir(
-            str(opencode_dir), "anthropic/claude-opus-4-5", str(env_file),
+            str(opencode_dir),
+            "anthropic/claude-opus-4-5",
+            str(env_file),
         )
         assert result == []
 
@@ -506,24 +639,30 @@ class TestProcessOpencodeDir:
         agents_dir: Path = opencode_dir / "agents"
         agents_dir.mkdir(parents=True)
 
-        (pa_dir / "modeler.yaml").write_text(textwrap.dedent("""\
+        (pa_dir / "modeler.yaml").write_text(
+            textwrap.dedent("""\
             default_model: "google/gemini-2.5-pro"
             summarizer_model: "google/gemini-2.0-flash"
             summarizer_prompt: |
               Compare the results from all instances.
-        """))
-        (agents_dir / "orchestrator.md").write_text(textwrap.dedent("""\
+        """)
+        )
+        (agents_dir / "orchestrator.md").write_text(
+            textwrap.dedent("""\
             ---
             mode: primary
             ---
             Call parallel-agents with model google/gemini-2.5-pro
-        """))
+        """)
+        )
 
         env_file: Path = tmp_path / ".env"
         env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
 
         result: list[str] = process_opencode_dir(
-            str(opencode_dir), "anthropic/claude-opus-4-5", str(env_file),
+            str(opencode_dir),
+            "anthropic/claude-opus-4-5",
+            str(env_file),
         )
         yaml_content: str = (pa_dir / "modeler.yaml").read_text()
         md_content: str = (agents_dir / "orchestrator.md").read_text()
@@ -533,3 +672,28 @@ class TestProcessOpencodeDir:
         # ... but the .md body prose is left intact (issue #51).
         assert "google/gemini-2.5-pro" in md_content
         assert "anthropic/claude-opus-4-5" not in md_content
+
+    def test_oauth_provider_not_rewritten(self, tmp_path: Path) -> None:
+        opencode_dir: Path = tmp_path / ".opencode"
+        pa_dir: Path = opencode_dir / "parallel_agents"
+        pa_dir.mkdir(parents=True)
+        (pa_dir / "agent.yaml").write_text(
+            'default_model: "github-copilot-enterprise/gpt-5.4-mini"\n'
+        )
+        env_file: Path = tmp_path / ".env"
+        env_file.write_text("ANTHROPIC_API_KEY=sk-123\n")
+        opencode_data_dir: Path = tmp_path / "oauth-data"
+        opencode_data_dir.mkdir()
+        (opencode_data_dir / "auth.json").write_text(
+            '{"github-copilot-enterprise": {"type": "oauth"}}'
+        )
+
+        result: list[str] = process_opencode_dir(
+            str(opencode_dir),
+            "anthropic/claude-opus-4-5",
+            str(env_file),
+            opencode_data_dir=str(opencode_data_dir),
+        )
+        content: str = (pa_dir / "agent.yaml").read_text()
+        assert "github-copilot-enterprise/gpt-5.4-mini" in content
+        assert result == []

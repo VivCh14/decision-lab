@@ -139,6 +139,19 @@ Signal handlers ensure cleanup even on interrupts.
 |-----------|----------------|---------|
 | `{work_dir}` | `/workspace` | Session data, config, hooks |
 | `{work_dir}/_opencode_logs` | `/_opencode_logs` | Log output |
+| `{opencode_data_dir}` (optional) | `/root/.local/share/opencode` | OpenCode OAuth credentials — see [OAuth Authentication](#oauth-authentication) |
+
+## OAuth Authentication
+
+As an alternative to an API key in `.env`, a decision-pack's provider can be authenticated via OAuth using [`dlab auth login`](cli-reference.md#auth-login):
+
+```bash
+dlab auth login --dpack ./my-dpack
+```
+
+This runs `opencode auth login` interactively in a throwaway `docker run --rm -it` container (a real terminal is attached so device-code/browser flows work), persisting credentials to `.docker-opencode-data/{dpack-name}/` on the host by default — scoped per decision-pack, since each pack pins its own `opencode_version` and the credential file's format belongs to whichever opencode version wrote it. Pass `--opencode-data-dir PATH` to override this on either command.
+
+`dlab run` auto-detects the same per-pack directory (no flag needed once it exists) and mounts it at `/root/.local/share/opencode`. If a provider is both OAuth-authenticated *and* has an API key set in `.env` for the same provider, dlab blanks that provider's env vars inside the container so the OAuth credential is used — a stale or invalid `.env` key can no longer shadow a working OAuth login. Preflight validation and provider-fallback rewriting (see [decision-packs.md](decision-packs.md)) also treat an OAuth-authenticated provider as available, the same as a valid env var.
 
 ## Environment Variables
 

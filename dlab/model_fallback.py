@@ -13,6 +13,7 @@ Two-phase design:
 """
 
 import difflib
+import json
 import os
 import re
 from pathlib import Path
@@ -22,10 +23,10 @@ from dlab.config import load_config_yaml, resolve_model_roles
 from dlab.create_dpack import KNOWN_PROVIDER_ENVS, get_model_list, get_provider_env_vars
 
 
-# Matches provider/model-name patterns (e.g. "anthropic/claude-sonnet-4-5")
+# Matches provider/model-name patterns (e.g. "anthropic/claude-sonnet-4-5", "nvidia/nvidia/nemotron-3-ultra-550b-a55b")
 # Negative lookahead (?!/) excludes file paths like "opencode/agents/foo.md"
 _MODEL_PATTERN: re.Pattern[str] = re.compile(
-    r"\b([a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+)\b(?!/)",
+    r"(?<![a-zA-Z0-9._/-])([a-zA-Z0-9_-]+(?:/[a-zA-Z0-9._-]+)+)\b(?!/)",
 )
 
 
@@ -95,9 +96,30 @@ def _strip_comments(text: str) -> str:
 
 # Known file extensions that should not be treated as model names
 _FILE_EXTENSIONS: set[str] = {
-    ".md", ".py", ".yaml", ".yml", ".txt", ".json", ".ts", ".js",
-    ".html", ".css", ".sh", ".csv", ".pdf", ".png", ".jpg", ".jpeg",
-    ".gif", ".svg", ".xml", ".toml", ".ini", ".cfg", ".log", ".rst",
+    ".md",
+    ".py",
+    ".yaml",
+    ".yml",
+    ".txt",
+    ".json",
+    ".ts",
+    ".js",
+    ".html",
+    ".css",
+    ".sh",
+    ".csv",
+    ".pdf",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".xml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".log",
+    ".rst",
 }
 
 
@@ -129,11 +151,7 @@ def find_model_strings(text: str) -> list[str]:
     seen: set[str] = set()
     for m in matches:
         provider: str = m.split("/")[0]
-        if (
-            provider in known_prefixes
-            and m not in seen
-            and not _is_likely_file_path(m)
-        ):
+        if provider in known_prefixes and m not in seen and not _is_likely_file_path(m):
             seen.add(m)
             models.append(m)
     return models
@@ -161,11 +179,71 @@ def _format_env_setup_hint(model: str) -> str:
     return "Check provider documentation for required API key"
 
 
+def get_oauth_authenticated_providers(opencode_data_dir: str | None) -> set[str]:
+    """
+    Return provider IDs with an OAuth credential in a Docker OpenCode data dir.
+
+    Reads only the top-level keys of auth.json — never the credential values.
+
+    Parameters
+    ----------
+    opencode_data_dir : str | None
+        Host directory mounted at /root/.local/share/opencode in the
+        container, or None if OAuth data isn't used for this run.
+
+    Returns
+    -------
+    set[str]
+        Provider IDs (e.g. {"github-copilot-enterprise"}) with an OAuth
+        credential on file. Empty if there is no directory or no auth.json.
+    """
+    if not opencode_data_dir:
+        return set()
+    auth_path: Path = Path(opencode_data_dir) / "auth.json"
+    if not auth_path.exists():
+        return set()
+    try:
+        auth_data: Any = json.loads(auth_path.read_text())
+    except (OSError, ValueError):
+        return set()
+    if not isinstance(auth_data, dict):
+        return set()
+    return set(auth_data.keys())
+
+
+def get_oauth_env_overrides(opencode_data_dir: str | None) -> dict[str, str]:
+    """
+    Build env-var overrides that blank a stale .env token for OAuth providers.
+
+    OAuth must win over a conflicting/invalid API key for the same provider
+    (e.g. an expired GITHUB_TOKEN), so every credential var for an
+    OAuth-authenticated provider is set to an empty string, overriding
+    whatever --env-file supplied.
+
+    Parameters
+    ----------
+    opencode_data_dir : str | None
+        Host directory with OpenCode OAuth credentials, if any.
+
+    Returns
+    -------
+    dict[str, str]
+        Env var name -> "" for each var belonging to an OAuth-authenticated
+        provider. Empty if there is no OAuth data.
+    """
+    overrides: dict[str, str] = {}
+    for provider in get_oauth_authenticated_providers(opencode_data_dir):
+        for var in KNOWN_PROVIDER_ENVS.get(provider, []):
+            overrides[var] = ""
+    return overrides
+
+
 def preflight_check(
     orchestrator_model: str,
     config_dir: str,
     env_file: str | None,
     no_sandboxing: bool = False,
+    opencode_data_dir: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """
     Validate models before session creation. Runs on source dpack files.
@@ -183,6 +261,9 @@ def preflight_check(
     no_sandboxing : bool
         If True, also check os.environ for API keys (local mode inherits
         the shell environment).
+    opencode_data_dir : str | None
+        Host directory with OpenCode OAuth credentials, if any. Providers
+        authenticated there count as available even without an env var.
 
     Returns
     -------
@@ -198,26 +279,34 @@ def preflight_check(
         env_vars.update(os.environ)
     env_vars.update(parse_env_file(env_file))
     available: set[str] = get_available_providers(env_vars)
+    oauth_providers: set[str] = get_oauth_authenticated_providers(opencode_data_dir)
 
     # Validate orchestrator model name
     all_known: list[str] = get_model_list()
     known: set[str] = set(all_known)
     if orchestrator_model not in known:
-        suggestions: list[str] = sorted(difflib.get_close_matches(
-            orchestrator_model, all_known, n=3, cutoff=0.6,
-        ))
+        suggestions: list[str] = sorted(
+            difflib.get_close_matches(
+                orchestrator_model,
+                all_known,
+                n=3,
+                cutoff=0.6,
+            )
+        )
         if suggestions:
             alt: str = ", ".join(suggestions)
-            errors.append(
-                f"Unknown model {orchestrator_model} — did you mean: {alt}?"
-            )
+            errors.append(f"Unknown model {orchestrator_model} — did you mean: {alt}?")
         else:
             errors.append(f"Unknown model {orchestrator_model}")
         return errors, warnings
 
     # Check orchestrator model's provider key
     orchestrator_provider: str = orchestrator_model.split("/")[0]
-    if orchestrator_provider in KNOWN_PROVIDER_ENVS and orchestrator_provider not in available:
+    if (
+        orchestrator_provider in KNOWN_PROVIDER_ENVS
+        and orchestrator_provider not in available
+        and orchestrator_provider not in oauth_providers
+    ):
         env_hint: str = _format_env_setup_hint(orchestrator_model)
         errors.append(
             f"Orchestrator model {orchestrator_model} requires an API key "
@@ -247,19 +336,24 @@ def preflight_check(
     # Validate agent model names exist in known list
     for model in all_models:
         if model not in known:
-            suggestions: list[str] = sorted(difflib.get_close_matches(
-                model, all_known, n=3, cutoff=0.6,
-            ))
+            suggestions: list[str] = sorted(
+                difflib.get_close_matches(
+                    model,
+                    all_known,
+                    n=3,
+                    cutoff=0.6,
+                )
+            )
             if suggestions:
                 alt: str = ", ".join(suggestions)
-                errors.append(
-                    f"Unknown model {model} — did you mean: {alt}?"
-                )
+                errors.append(f"Unknown model {model} — did you mean: {alt}?")
             else:
                 errors.append(f"Unknown model {model}")
 
     # Check which agent models will need fallback
-    unavailable: set[str] = set(KNOWN_PROVIDER_ENVS.keys()) - available
+    unavailable: set[str] = (
+        set(KNOWN_PROVIDER_ENVS.keys()) - available - oauth_providers
+    )
     models_needing_fallback: list[str] = []
     for model in all_models:
         provider: str = model.split("/")[0]
@@ -273,9 +367,7 @@ def preflight_check(
                 continue
             seen.add(model)
             env_hint = _format_env_setup_hint(model)
-            warnings.append(
-                f"{model} -> {orchestrator_model} ({env_hint})"
-            )
+            warnings.append(f"{model} -> {orchestrator_model} ({env_hint})")
 
     return errors, warnings
 
@@ -368,6 +460,7 @@ def process_opencode_dir(
     orchestrator_model: str,
     env_file: str | None,
     no_sandboxing: bool = False,
+    opencode_data_dir: str | None = None,
 ) -> list[str]:
     """
     Apply model fallback to all config files in .opencode/ (work-dir copies).
@@ -385,6 +478,9 @@ def process_opencode_dir(
         Path to .env file.
     no_sandboxing : bool
         If True, also check os.environ for API keys.
+    opencode_data_dir : str | None
+        Host directory with OpenCode OAuth credentials, if any. Providers
+        authenticated there are never rewritten to the orchestrator model.
 
     Returns
     -------
@@ -400,12 +496,19 @@ def process_opencode_dir(
         env_vars.update(os.environ)
     env_vars.update(parse_env_file(env_file))
     available: set[str] = get_available_providers(env_vars)
+    oauth_providers: set[str] = get_oauth_authenticated_providers(opencode_data_dir)
 
     orchestrator_provider: str = orchestrator_model.split("/")[0]
-    if orchestrator_provider in KNOWN_PROVIDER_ENVS and orchestrator_provider not in available:
+    if (
+        orchestrator_provider in KNOWN_PROVIDER_ENVS
+        and orchestrator_provider not in available
+        and orchestrator_provider not in oauth_providers
+    ):
         return []
 
-    unavailable: set[str] = set(KNOWN_PROVIDER_ENVS.keys()) - available
+    unavailable: set[str] = (
+        set(KNOWN_PROVIDER_ENVS.keys()) - available - oauth_providers
+    )
     if not unavailable:
         return []
 
@@ -419,7 +522,10 @@ def process_opencode_dir(
     for f in config_files:
         text: str = f.read_text()
         new_text, replacements = apply_model_fallback(
-            text, orchestrator_model, unavailable, is_markdown=f.suffix == ".md",
+            text,
+            orchestrator_model,
+            unavailable,
+            is_markdown=f.suffix == ".md",
         )
         if replacements:
             f.write_text(new_text)

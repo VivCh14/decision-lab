@@ -10,6 +10,7 @@ import yaml
 
 from dlab.config import (
     apply_model_roles_to_opencode,
+    default_opencode_data_dir,
     load_config_yaml,
     load_dpack_config,
     resolve_model_roles,
@@ -119,7 +120,9 @@ class TestLoadDpackConfig:
         assert config["name"] == "test-dpack"
         assert config["config_dir"] == str(dpack_config_dir.resolve())
 
-    def test_resolves_relative_path(self, dpack_config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_resolves_relative_path(
+        self, dpack_config_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Relative paths should be resolved to absolute."""
         monkeypatch.chdir(dpack_config_dir.parent)
 
@@ -153,6 +156,24 @@ class TestLoadDpackConfig:
         config: dict[str, Any] = load_dpack_config(str(dpack))
 
         assert config["opencode_version"] == "1.1.25"
+
+
+class TestDefaultOpencodeDataDir:
+    """Tests for default_opencode_data_dir()."""
+
+    def test_scoped_by_dpack_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Different dpacks must get distinct, non-colliding default dirs."""
+        monkeypatch.chdir(tmp_path)
+
+        mmm_path: Path = default_opencode_data_dir({"name": "mmm"})
+        poem_path: Path = default_opencode_data_dir({"name": "poem"})
+
+        assert mmm_path != poem_path
+        assert mmm_path.name == "mmm"
+        assert poem_path.name == "poem"
+        assert mmm_path.parent == poem_path.parent == tmp_path / ".docker-opencode-data"
 
 
 def _make_dpack_dir(tmp_path: Path, hooks_yaml: str = "") -> Path:
@@ -258,7 +279,9 @@ class TestUpsertYamlScalar:
     def test_inserts_after_anchor(self) -> None:
         text: str = "failure_behavior: continue\nmax_instances: 5\n"
         result: str = upsert_yaml_scalar(
-            text, "default_model", "anthropic/claude-haiku-4-5",
+            text,
+            "default_model",
+            "anthropic/claude-haiku-4-5",
             insert_after="failure_behavior",
         )
         assert 'default_model: "anthropic/claude-haiku-4-5"' in result
@@ -289,11 +312,7 @@ class TestUpsertYamlScalar:
     def test_does_not_touch_nested_same_named_key(self) -> None:
         # A `default_model:` nested under another mapping must be left alone;
         # only the top-level scalar is upserted (the old regex could match it).
-        text: str = (
-            'default_model: "top/old"\n'
-            "nested:\n"
-            '  default_model: "inner/keep"\n'
-        )
+        text: str = 'default_model: "top/old"\nnested:\n  default_model: "inner/keep"\n'
         result: str = upsert_yaml_scalar(text, "default_model", "top/new")
         parsed = yaml.safe_load(result)
         assert parsed["default_model"] == "top/new"

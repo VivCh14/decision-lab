@@ -61,7 +61,8 @@ SOURCE_HASH_LABEL: str = "dlab.source-hash"
 
 
 def compute_docker_dir_hash(
-    docker_dir: Path, opencode_version: str = "latest",
+    docker_dir: Path,
+    opencode_version: str = "latest",
 ) -> str:
     """
     Compute a SHA256 hash of all files in the docker/ directory plus opencode version.
@@ -141,7 +142,9 @@ def get_image_source_hash(image_name: str) -> str | None:
 
 
 def needs_rebuild(
-    config_dir: str, image_name: str, opencode_version: str = "latest",
+    config_dir: str,
+    image_name: str,
+    opencode_version: str = "latest",
 ) -> tuple[bool, str]:
     """
     Check if a Docker image needs to be rebuilt based on source changes.
@@ -347,9 +350,12 @@ def build_image(
 
         returncode, stderr = _run_docker_build(
             [
-                "docker", "build",
-                "-t", image_name,
-                "--label", f"{SOURCE_HASH_LABEL}={source_hash}",
+                "docker",
+                "build",
+                "-t",
+                image_name,
+                "--label",
+                f"{SOURCE_HASH_LABEL}={source_hash}",
                 tmpdir,
             ],
             on_output=on_output,
@@ -386,12 +392,33 @@ def container_exists(container_name: str) -> bool:
     return bool(result.stdout.strip())
 
 
+def _resolve_env_file(env_file: str | None) -> Path | None:
+    """Validate an optional --env-file path, returning its resolved Path."""
+    if env_file is None:
+        return None
+    env_path: Path = Path(env_file).resolve()
+    if not env_path.exists():
+        raise ValueError(f"Environment file not found: {env_file}")
+    return env_path
+
+
+def _resolve_opencode_data_dir(opencode_data_dir: str | None) -> Path | None:
+    """Validate an optional OpenCode OAuth data directory, returning its resolved Path."""
+    if opencode_data_dir is None:
+        return None
+    opencode_data_path: Path = Path(opencode_data_dir).resolve()
+    if not opencode_data_path.is_dir():
+        raise ValueError(f"OpenCode data directory not found: {opencode_data_dir}")
+    return opencode_data_path
+
+
 def start_container(
     image_name: str,
     work_dir: str,
     container_name: str,
     env_file: str | None = None,
     extra_env: dict[str, str] | None = None,
+    opencode_data_dir: str | None = None,
 ) -> None:
     """
     Start a new Docker container with volume mounts.
@@ -411,6 +438,9 @@ def start_container(
         Optional path to an environment file to pass to the container.
     extra_env : dict[str, str] | None
         Additional environment variables to pass via -e flags.
+    opencode_data_dir : str | None
+        Optional host directory containing OpenCode authentication data. It is
+        mounted at /root/.local/share/opencode in the container.
 
     Raises
     ------
@@ -420,36 +450,51 @@ def start_container(
     if container_exists(container_name):
         raise ValueError(f"Container already exists: {container_name}")
 
-    if env_file is not None:
-        env_path: Path = Path(env_file).resolve()
-        if not env_path.exists():
-            raise ValueError(f"Environment file not found: {env_file}")
+    env_path: Path | None = _resolve_env_file(env_file)
+    opencode_data_path: Path | None = _resolve_opencode_data_dir(opencode_data_dir)
 
     work_path: Path = Path(work_dir).resolve()
 
     # Build the docker run command
     cmd: list[str] = [
-        "docker", "run",
-        "-d",                                    # Detached mode
-        "--name", container_name,                # Container name
-        "-v", f"{work_path}:/workspace",         # Mount work_dir at /workspace
-        "-v", f"{work_path}/_opencode_logs:/_opencode_logs",     # Mount logs at /_opencode_logs
-        "-w", "/workspace",                      # Set working directory
+        "docker",
+        "run",
+        "-d",  # Detached mode
+        "--name",
+        container_name,  # Container name
+        "-v",
+        f"{work_path}:/workspace",  # Mount work_dir at /workspace
+        "-v",
+        f"{work_path}/_opencode_logs:/_opencode_logs",  # Mount logs at /_opencode_logs
+        "-w",
+        "/workspace",  # Set working directory
     ]
 
     # Add env file if provided
     if env_file is not None:
         cmd.extend(["--env-file", str(env_path)])
 
+    if opencode_data_path is not None:
+        cmd.extend(
+            [
+                "-v",
+                f"{opencode_data_path}:/root/.local/share/opencode",
+            ]
+        )
+
     # Add extra environment variables
     if extra_env:
         for key, value in extra_env.items():
             cmd.extend(["-e", f"{key}={value}"])
 
-    cmd.extend([
-        image_name,
-        "tail", "-f", "/dev/null",               # Keep container running
-    ])
+    cmd.extend(
+        [
+            image_name,
+            "tail",
+            "-f",
+            "/dev/null",  # Keep container running
+        ]
+    )
 
     result: subprocess.CompletedProcess[str] = subprocess.run(
         cmd,
@@ -459,6 +504,82 @@ def start_container(
 
     if result.returncode != 0:
         raise ValueError(f"Failed to start container: {result.stderr}")
+
+
+def _build_interactive_run_cmd(
+    image_name: str,
+    command: list[str],
+    env_file: str | None = None,
+    opencode_data_dir: str | None = None,
+) -> list[str]:
+    """
+    Build the argv for an ephemeral, TTY-attached `docker run` invocation.
+
+    Split out from run_interactive_container() so the command construction
+    can be tested without a real terminal or a Docker daemon.
+
+    Raises
+    ------
+    ValueError
+        If env_file or opencode_data_dir is provided but does not exist.
+    """
+    env_path: Path | None = _resolve_env_file(env_file)
+    opencode_data_path: Path | None = _resolve_opencode_data_dir(opencode_data_dir)
+
+    cmd: list[str] = ["docker", "run", "--rm", "-it"]
+    if env_path is not None:
+        cmd.extend(["--env-file", str(env_path)])
+    if opencode_data_path is not None:
+        cmd.extend(["-v", f"{opencode_data_path}:/root/.local/share/opencode"])
+    cmd.append(image_name)
+    cmd.extend(command)
+    return cmd
+
+
+def run_interactive_container(
+    image_name: str,
+    command: list[str],
+    env_file: str | None = None,
+    opencode_data_dir: str | None = None,
+) -> int:
+    """
+    Run a command interactively in a throwaway container with TTY passthrough.
+
+    Used for `opencode auth login`, whose OAuth device-code/menu prompts need
+    a real terminal. The container is ephemeral and removes itself (--rm).
+
+    Parameters
+    ----------
+    image_name : str
+        Name of the Docker image to use.
+    command : list[str]
+        Command and arguments to run inside the container.
+    env_file : str | None
+        Optional path to an environment file to pass to the container.
+    opencode_data_dir : str | None
+        Optional host directory mounted at /root/.local/share/opencode so
+        OAuth credentials persist across invocations.
+
+    Returns
+    -------
+    int
+        The container process's exit code.
+
+    Raises
+    ------
+    ValueError
+        If env_file or opencode_data_dir is provided but does not exist.
+    """
+    cmd: list[str] = _build_interactive_run_cmd(
+        image_name,
+        command,
+        env_file,
+        opencode_data_dir,
+    )
+
+    # No capture_output: stdio must stay attached to the real terminal.
+    result: subprocess.CompletedProcess[bytes] = subprocess.run(cmd)
+    return result.returncode
 
 
 def exec_command(
@@ -610,7 +731,15 @@ def run_opencode(
     runner_file: str = "/.run_opencode.sh"
 
     write_runner: subprocess.CompletedProcess[bytes] = subprocess.run(
-        ["docker", "exec", "-i", container_name, "sh", "-c", f"cat > {runner_file} && chmod +x {runner_file}"],
+        [
+            "docker",
+            "exec",
+            "-i",
+            container_name,
+            "sh",
+            "-c",
+            f"cat > {runner_file} && chmod +x {runner_file}",
+        ],
         input=runner_script.encode(),
         capture_output=True,
     )

@@ -198,6 +198,17 @@ def load_dpack_config(config_dir: str) -> dict[str, Any]:
     return config
 
 
+def default_opencode_data_dir(config: dict[str, Any]) -> Path:
+    """
+    Default host directory for a decision-pack's OpenCode OAuth credentials.
+
+    Scoped per decision-pack (by name) rather than shared, since each pack
+    pins its own opencode_version and auth.json's schema belongs to whichever
+    opencode version wrote it.
+    """
+    return Path.cwd() / ".docker-opencode-data" / config["name"]
+
+
 def resolve_model_roles(config: dict[str, Any]) -> dict[str, str]:
     """
     Resolve orchestrator, forecaster, and consolidator models from config.
@@ -257,7 +268,9 @@ def upsert_yaml_scalar(
     return stream.getvalue()
 
 
-def apply_model_roles_to_opencode(opencode_dir: str, model_roles: dict[str, str]) -> None:
+def apply_model_roles_to_opencode(
+    opencode_dir: str, model_roles: dict[str, str]
+) -> None:
     """
     Inject forecaster and consolidator models into parallel agent YAML configs.
 
@@ -271,12 +284,16 @@ def apply_model_roles_to_opencode(opencode_dir: str, model_roles: dict[str, str]
     for yaml_path in sorted(parallel_dir.glob("*.yaml")):
         text: str = yaml_path.read_text()
         text = upsert_yaml_scalar(
-            text, "default_model", model_roles["forecaster"],
+            text,
+            "default_model",
+            model_roles["forecaster"],
             insert_after="failure_behavior",
         )
         if "summarizer_prompt" in text:
             text = upsert_yaml_scalar(
-                text, "summarizer_model", model_roles["consolidator"],
+                text,
+                "summarizer_model",
+                model_roles["consolidator"],
                 insert_before="summarizer_prompt",
             )
         yaml_path.write_text(text)

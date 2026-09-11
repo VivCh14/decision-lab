@@ -4,12 +4,14 @@ Tests for dlab.docker module.
 These tests require Docker to be running.
 """
 
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from dlab.docker import (
+    _build_interactive_run_cmd,
     _run_docker_build,
     build_image,
     build_runner_script,
@@ -17,6 +19,7 @@ from dlab.docker import (
     container_exists,
     exec_command,
     image_exists,
+    run_interactive_container,
     start_container,
     stop_container,
 )
@@ -33,7 +36,7 @@ def docker_dir(tmp_path: Path) -> Path:
     docker_path.mkdir()
 
     dockerfile: Path = docker_path / "Dockerfile"
-    dockerfile.write_text("FROM python:3.11-slim\nCMD [\"echo\", \"hello\"]\n")
+    dockerfile.write_text('FROM python:3.11-slim\nCMD ["echo", "hello"]\n')
 
     return tmp_path
 
@@ -45,6 +48,7 @@ def built_image(docker_dir: Path) -> str:
     yield TEST_IMAGE_NAME
     # Cleanup: remove the image after test
     import subprocess
+
     subprocess.run(["docker", "rmi", "-f", TEST_IMAGE_NAME], capture_output=True)
 
 
@@ -88,6 +92,7 @@ class TestBuildImage:
 
         # Cleanup
         import subprocess
+
         subprocess.run(["docker", "rmi", "-f", image_name], capture_output=True)
 
     def test_missing_docker_dir(self, tmp_path: Path) -> None:
@@ -147,7 +152,9 @@ class TestStartContainer:
         finally:
             stop_container(container_name)
 
-    def test_container_already_exists(self, running_container: str, built_image: str, tmp_path: Path) -> None:
+    def test_container_already_exists(
+        self, running_container: str, built_image: str, tmp_path: Path
+    ) -> None:
         """Should raise ValueError if container already exists."""
         work_dir: Path = tmp_path / "work2"
         work_dir.mkdir()
@@ -172,7 +179,8 @@ class TestExecCommand:
     def test_exec_failure(self, running_container: str) -> None:
         """Should return non-zero exit code on failure."""
         exit_code, stdout, stderr = exec_command(
-            running_container, ["false"]  # 'false' command always exits with 1
+            running_container,
+            ["false"],  # 'false' command always exits with 1
         )
 
         assert exit_code == 1
@@ -214,7 +222,9 @@ class TestStartContainerWithEnvFile:
         env_file.write_text("TEST_VAR=hello_from_env\n")
 
         try:
-            start_container(built_image, str(work_dir), container_name, env_file=str(env_file))
+            start_container(
+                built_image, str(work_dir), container_name, env_file=str(env_file)
+            )
             assert container_exists(container_name)
 
             # Verify env var is available in container
@@ -226,7 +236,9 @@ class TestStartContainerWithEnvFile:
         finally:
             stop_container(container_name)
 
-    def test_start_with_nonexistent_env_file(self, built_image: str, tmp_path: Path) -> None:
+    def test_start_with_nonexistent_env_file(
+        self, built_image: str, tmp_path: Path
+    ) -> None:
         """Should raise ValueError if env file doesn't exist."""
         work_dir: Path = tmp_path / "work"
         work_dir.mkdir()
@@ -235,8 +247,10 @@ class TestStartContainerWithEnvFile:
 
         with pytest.raises(ValueError, match="Environment file not found"):
             start_container(
-                built_image, str(work_dir), container_name,
-                env_file="/path/to/nonexistent/env/file"
+                built_image,
+                str(work_dir),
+                container_name,
+                env_file="/path/to/nonexistent/env/file",
             )
 
     def test_start_without_env_file(self, built_image: str, tmp_path: Path) -> None:
@@ -253,16 +267,174 @@ class TestStartContainerWithEnvFile:
             stop_container(container_name)
 
 
+class TestStartContainerWithOpenCodeData:
+    """Tests for mounting dedicated OpenCode authentication data."""
+
+    def test_start_with_opencode_data_dir(
+        self, built_image: str, tmp_path: Path
+    ) -> None:
+        """Should mount the host OpenCode data directory in the container."""
+        work_dir: Path = tmp_path / "work"
+        work_dir.mkdir()
+        (work_dir / "_opencode_logs").mkdir()
+        opencode_data_dir: Path = tmp_path / ".docker-opencode-data"
+        opencode_data_dir.mkdir()
+        (opencode_data_dir / "auth.json").write_text("oauth-data")
+        container_name: str = "dlab-opencode-data-test"
+
+        try:
+            start_container(
+                built_image,
+                str(work_dir),
+                container_name,
+                opencode_data_dir=str(opencode_data_dir),
+            )
+            exit_code, stdout, stderr = exec_command(
+                container_name,
+                ["cat", "/root/.local/share/opencode/auth.json"],
+            )
+            assert exit_code == 0
+            assert stdout == "oauth-data"
+        finally:
+            stop_container(container_name)
+
+    def test_start_with_missing_opencode_data_dir(
+        self, built_image: str, tmp_path: Path
+    ) -> None:
+        """Should reject a missing OpenCode data directory."""
+        work_dir: Path = tmp_path / "work"
+        work_dir.mkdir()
+        (work_dir / "_opencode_logs").mkdir()
+
+        with pytest.raises(ValueError, match="OpenCode data directory not found"):
+            start_container(
+                built_image,
+                str(work_dir),
+                "dlab-opencode-data-missing-test",
+                opencode_data_dir=str(tmp_path / "missing"),
+            )
+
+
+class TestOAuthEnvOverrideIntegration:
+    """
+    Real-Docker proof that get_oauth_env_overrides() actually blanks a
+    conflicting .env token inside a running container (not just in-memory).
+    """
+
+    def test_oauth_override_blanks_github_token_in_container(
+        self, built_image: str, tmp_path: Path
+    ) -> None:
+        from dlab.model_fallback import get_oauth_env_overrides
+
+        work_dir: Path = tmp_path / "work"
+        work_dir.mkdir()
+        (work_dir / "_opencode_logs").mkdir()
+
+        env_file: Path = tmp_path / "test.env"
+        env_file.write_text("GITHUB_TOKEN=stale-invalid-token\n")
+
+        opencode_data_dir: Path = tmp_path / "oauth-data"
+        opencode_data_dir.mkdir()
+        (opencode_data_dir / "auth.json").write_text(
+            '{"github-copilot-enterprise": {"type": "oauth"}}'
+        )
+
+        container_name: str = "dlab-oauth-override-test"
+        extra_env: dict[str, str] = get_oauth_env_overrides(str(opencode_data_dir))
+        assert extra_env == {"GITHUB_TOKEN": ""}
+
+        try:
+            start_container(
+                built_image,
+                str(work_dir),
+                container_name,
+                env_file=str(env_file),
+                extra_env=extra_env,
+                opencode_data_dir=str(opencode_data_dir),
+            )
+            exit_code, stdout, stderr = exec_command(
+                container_name,
+                ["sh", "-c", "echo $GITHUB_TOKEN"],
+            )
+            assert exit_code == 0
+            assert stdout.strip() == ""
+        finally:
+            stop_container(container_name)
+
+
+class TestRunInteractiveContainer:
+    """Tests for run_interactive_container() and its command construction."""
+
+    def test_build_cmd_has_tty_and_rm_flags(self) -> None:
+        cmd: list[str] = _build_interactive_run_cmd(
+            "some-image", ["opencode", "auth", "login"]
+        )
+        assert cmd[:4] == ["docker", "run", "--rm", "-it"]
+        assert cmd[-3:] == ["opencode", "auth", "login"]
+        assert "some-image" in cmd
+
+    def test_build_cmd_includes_env_file_and_mount(self, tmp_path: Path) -> None:
+        env_file: Path = tmp_path / "test.env"
+        env_file.write_text("KEY=value\n")
+        opencode_data_dir: Path = tmp_path / "oauth-data"
+        opencode_data_dir.mkdir()
+
+        cmd: list[str] = _build_interactive_run_cmd(
+            "some-image",
+            ["true"],
+            env_file=str(env_file),
+            opencode_data_dir=str(opencode_data_dir),
+        )
+        assert "--env-file" in cmd
+        assert str(env_file.resolve()) in cmd
+        assert f"{opencode_data_dir.resolve()}:/root/.local/share/opencode" in cmd
+
+    def test_build_cmd_rejects_missing_opencode_data_dir(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="OpenCode data directory not found"):
+            _build_interactive_run_cmd(
+                "some-image",
+                ["true"],
+                opencode_data_dir=str(tmp_path / "missing"),
+            )
+
+    def test_build_cmd_rejects_missing_env_file(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="Environment file not found"):
+            _build_interactive_run_cmd(
+                "some-image",
+                ["true"],
+                env_file=str(tmp_path / "missing.env"),
+            )
+
+    def test_runs_and_returns_exit_code(self, built_image: str) -> None:
+        """
+        A trivial command should run and exit cleanly.
+
+        Skipped without a real terminal: `docker run -it` requires stdin to
+        be an actual TTY (verified: it errors "the input device is not a
+        TTY" under pytest's non-interactive stdin), so this only runs when
+        invoked from a real terminal session.
+        """
+        if not sys.stdin.isatty():
+            pytest.skip("docker run -it requires a real terminal (stdin is not a TTY)")
+        exit_code: int = run_interactive_container(built_image, ["true"])
+        assert exit_code == 0
+
+
 class TestBuildRunnerScript:
     """Tests for build_runner_script function (no Docker required)."""
 
     def test_basic_script(self) -> None:
         """Script should have opencode command and tee."""
-        script: str = build_runner_script("/.prompt.txt", "anthropic/claude-sonnet-4-0", "main")
+        script: str = build_runner_script(
+            "/.prompt.txt", "anthropic/claude-sonnet-4-0", "main"
+        )
 
         assert "#!/bin/bash" in script
         assert "set -o pipefail" in script
-        assert 'opencode run --format json --log-level DEBUG --model "anthropic/claude-sonnet-4-0"' in script
+        assert (
+            'opencode run --format json --log-level DEBUG --model "anthropic/claude-sonnet-4-0"'
+            in script
+        )
         # dlab_start JSON line is written first, then opencode appends via tee -a
         assert "'type':'dlab_start'" in script
         assert "tee -a /_opencode_logs/main.log" in script
@@ -270,7 +442,9 @@ class TestBuildRunnerScript:
     def test_script_model_and_prefix(self) -> None:
         """Model and log prefix should appear correctly in script."""
         script: str = build_runner_script(
-            "/.prompt.txt", "anthropic/claude-opus-4-0", "instance-3",
+            "/.prompt.txt",
+            "anthropic/claude-opus-4-0",
+            "instance-3",
         )
 
         assert '--model "anthropic/claude-opus-4-0"' in script

@@ -38,6 +38,7 @@ This shows shape, columns, dtypes, missing values, and duplicates.
 ```python
 #!/usr/bin/env python3
 """Detailed data exploration."""
+
 from mmm_lib import (
     load_csv_or_parquet_from_file,
     check_time_series_continuity,
@@ -47,7 +48,9 @@ from mmm_lib import (
 df = load_csv_or_parquet_from_file("/workspace/data/your_file.csv")
 date_col = "..."  # from your inspection
 continuity = check_time_series_continuity(df, date_col)
-stats = analyze_mmm_statistics(df, date_col=date_col, target_col="...", channel_cols=[...])
+stats = analyze_mmm_statistics(
+    df, date_col=date_col, target_col="...", channel_cols=[...]
+)
 ```
 
 **Write `data_summary.md`** with:
@@ -74,13 +77,13 @@ This ensures robust data preparation by comparing outputs from multiple AI model
 }
 ```
 
-**Note:** The data-preparer config automatically uses 2 different models (Sonnet, Gemini) for each instance. You can override with explicit models if needed:
+**Note:** You can override explicit models if needed:
 
 ```json
 {
   "agent": "data-preparer",
   "prompts": ["...", "..."],
-  "models": ["anthropic/claude-opus-4-5", "google/gemini-2.5-pro"]
+  "models": ["github-copilot-enterprise/claude-sonnet-5", "github-copilot-enterprise/gemini-3.8-flash"]
 }
 ```
 
@@ -540,7 +543,7 @@ except:
     n_missing = 0  # FABRICATED DATA!
 
 # ABSOLUTELY FORBIDDEN - using hasattr to skip and substitute
-if hasattr(output, 'error_rate'):
+if hasattr(output, "error_rate"):
     error_rate = output.error_rate
 else:
     error_rate = 0.0  # FABRICATED DATA!
@@ -578,7 +581,6 @@ All functions are available via `from mmm_lib import ...`:
 from mmm_lib import (
     # === Data loading ===
     load_csv_or_parquet_from_file,  # Use in scripts (inspect-data tool handles initial inspection)
-
     # === Data inspection ===
     inspect_dataframe_basic,
     analyze_missing_values,
@@ -589,7 +591,6 @@ from mmm_lib import (
     plot_time_series,
     plot_correlation_heatmap,
     save_cleaned_data,
-
     # === Statistical analysis ===
     analyze_mmm_statistics,
     test_stationarity_adf,
@@ -599,12 +600,10 @@ from mmm_lib import (
     detect_seasonality_fft,
     analyze_per_dimension,
     analyze_aggregated,
-
     # === Model fitting ===
     create_mmm_instance,
     fit_mmm_model,
     check_convergence,
-
     # === Analysis (utilities not covered by pymc-marketing) ===
     generate_recommendations,
     check_posterior_predictive,
@@ -764,14 +763,15 @@ roas_hdi = az.hdi(roas_samples)
 
 ```python
 # WRONG - amateurish and misleading
-growth = (df['outcome'].iloc[-1] / df['outcome'].iloc[0] - 1) * 100
+growth = (df["outcome"].iloc[-1] / df["outcome"].iloc[0] - 1) * 100
 
 # CORRECT - use linear regression over all data
 from scipy import stats
+
 slope, intercept, r_value, p_value, std_err = stats.linregress(
-    np.arange(len(df)), df['outcome'].values
+    np.arange(len(df)), df["outcome"].values
 )
-annual_growth_pct = (slope * periods_per_year / df['outcome'].mean()) * 100
+annual_growth_pct = (slope * periods_per_year / df["outcome"].mean()) * 100
 ```
 
 ### Data Transformation Rules

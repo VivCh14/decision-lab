@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
-from dlab.cli import app, cmd_connect, cmd_install, cmd_run
+from dlab.cli import app, cmd_auth_login, cmd_connect, cmd_install, cmd_run
 
 runner = CliRunner()
 
@@ -66,6 +66,12 @@ class TestTyperApp:
         assert result.exit_code == 0
         assert "OUTPUT_DIR" in result.output
 
+    def test_auth_login_help(self) -> None:
+        result = runner.invoke(app, ["auth", "login", "--help"])
+        assert result.exit_code == 0
+        assert "--dpack" in result.output
+        assert "--opencode-data-dir" in result.output
+
     def test_no_args_prints_help(self) -> None:
         result = runner.invoke(app, [])
         assert result.exit_code == 0
@@ -108,8 +114,15 @@ class TestRunSubcommand:
     """
 
     ALL_RUN_OPTIONS: tuple[str, ...] = (
-        "--dpack", "--data", "--model", "--prompt", "--prompt-file",
-        "--work-dir", "--continue-dir", "--rebuild", "--env-file",
+        "--dpack",
+        "--data",
+        "--model",
+        "--prompt",
+        "--prompt-file",
+        "--work-dir",
+        "--continue-dir",
+        "--rebuild",
+        "--env-file",
         "--no-sandboxing",
     )
 
@@ -133,8 +146,17 @@ class TestRunSubcommand:
     def test_run_repeated_data_flag_parses(self) -> None:
         result = runner.invoke(
             app,
-            ["run", "--dpack", "/nonexistent", "--data", "/a", "--data", "/b",
-             "--prompt", "test"],
+            [
+                "run",
+                "--dpack",
+                "/nonexistent",
+                "--data",
+                "/a",
+                "--data",
+                "/b",
+                "--prompt",
+                "test",
+            ],
         )
         # exit 1 (invalid dpack) is fine; exit 2 would mean a parse error
         assert result.exit_code == 1
@@ -152,18 +174,35 @@ class TestRunSubcommand:
         prompt_file.write_text("file prompt")
         result = runner.invoke(
             app,
-            ["run", "--dpack", str(dpack_config_dir), "--data", str(data_dir),
-             "--prompt", "inline", "--prompt-file", str(prompt_file)],
+            [
+                "run",
+                "--dpack",
+                str(dpack_config_dir),
+                "--data",
+                str(data_dir),
+                "--prompt",
+                "inline",
+                "--prompt-file",
+                str(prompt_file),
+            ],
         )
         assert result.exit_code == 1
 
     @pytest.mark.parametrize(
         "args",
         [
-            ["--prompt", "test"],                                # missing dpack
-            ["--dpack", "/nonexistent", "--prompt", "test"],     # invalid dpack
-            ["--dpack", "/nonexistent", "--data", "/a", "--data", "/b",
-             "--prompt", "t"],                                   # repeated data
+            ["--prompt", "test"],  # missing dpack
+            ["--dpack", "/nonexistent", "--prompt", "test"],  # invalid dpack
+            [
+                "--dpack",
+                "/nonexistent",
+                "--data",
+                "/a",
+                "--data",
+                "/b",
+                "--prompt",
+                "t",
+            ],  # repeated data
         ],
         ids=["missing-dpack", "invalid-dpack", "repeated-data"],
     )
@@ -177,17 +216,30 @@ class TestRunSubcommand:
     def test_shorthand_prompt_value_run_is_not_a_subcommand(self) -> None:
         """A --prompt value of "run" must stay an option value, not get
         dispatched as the run subcommand."""
-        result = runner.invoke(
-            app, ["--dpack", "/nonexistent", "--prompt", "run"]
-        )
+        result = runner.invoke(app, ["--dpack", "/nonexistent", "--prompt", "run"])
         # invalid dpack error from cmd_run, not a parse/dispatch error
         assert result.exit_code == 1
 
     def test_run_unknown_flag_is_parse_error(self) -> None:
-        result = runner.invoke(
-            app, ["run", "--dpack", "/x", "--bogus-flag"]
-        )
+        result = runner.invoke(app, ["run", "--dpack", "/x", "--bogus-flag"])
         assert result.exit_code == 2
+
+
+class TestAuthLoginSubcommand:
+    """Tests for `dlab auth login` wiring (cmd_auth_login)."""
+
+    def test_invalid_dpack_reaches_cmd_auth_login(self) -> None:
+        """Exit code 1 (not a parse error) proves it reached cmd_auth_login."""
+        result = runner.invoke(app, ["auth", "login", "--dpack", "/nonexistent"])
+        assert result.exit_code == 1
+
+    def test_missing_dpack_is_parse_error(self) -> None:
+        """--dpack is required, so omitting it is a Typer parse error."""
+        result = runner.invoke(app, ["auth", "login"])
+        assert result.exit_code == 2
+
+    def test_cmd_auth_login_invalid_dpack_returns_one(self) -> None:
+        assert cmd_auth_login(dpack="/nonexistent") == 1
 
 
 class TestCmdRun:

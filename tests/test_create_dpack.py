@@ -157,7 +157,9 @@ class TestGenerateDpack:
         }
         generate_dpack(tmp_path, config)
 
-        content: str = (tmp_path / "proj" / "opencode" / "agents" / "proj-agent.md").read_text()
+        content: str = (
+            tmp_path / "proj" / "opencode" / "agents" / "proj-agent.md"
+        ).read_text()
         assert "description: My agent" in content
         assert "mode: primary" in content
         assert "read: true" in content
@@ -170,7 +172,9 @@ class TestGenerateDpack:
             "skeletons": {"subagents": True, "parallel_agents": False},
         }
         generate_dpack(tmp_path, config)
-        content: str = (tmp_path / "proj" / "opencode" / "agents" / "orchestrator.md").read_text()
+        content: str = (
+            tmp_path / "proj" / "opencode" / "agents" / "orchestrator.md"
+        ).read_text()
         assert "task: true" in content
         assert "read: true" in content
         assert "parallel-agents" not in content
@@ -182,7 +186,9 @@ class TestGenerateDpack:
             "skeletons": {"parallel_agents": True, "subagents": True},
         }
         generate_dpack(tmp_path, config)
-        content: str = (tmp_path / "proj" / "opencode" / "agents" / "orchestrator.md").read_text()
+        content: str = (
+            tmp_path / "proj" / "opencode" / "agents" / "orchestrator.md"
+        ).read_text()
         assert "parallel-agents: true" in content
         assert "task:" not in content
 
@@ -190,7 +196,9 @@ class TestGenerateDpack:
         """Agent .md should NOT have parallel-agents tool by default."""
         generate_dpack(tmp_path, self._minimal_config())
 
-        content: str = (tmp_path / "test-dpack" / "opencode" / "agents" / "orchestrator.md").read_text()
+        content: str = (
+            tmp_path / "test-dpack" / "opencode" / "agents" / "orchestrator.md"
+        ).read_text()
         assert "parallel-agents" not in content
 
     def test_rejects_invalid_name(self, tmp_path: Path) -> None:
@@ -327,7 +335,9 @@ class TestSkeletonSubagents:
         }
         generate_dpack(tmp_path, config)
 
-        worker: Path = tmp_path / "sub-test" / "opencode" / "agents" / "example-worker.md"
+        worker: Path = (
+            tmp_path / "sub-test" / "opencode" / "agents" / "example-worker.md"
+        )
         assert worker.is_file()
         content: str = worker.read_text()
         assert "mode: subagent" in content
@@ -351,13 +361,17 @@ class TestSkeletonSubagents:
         }
         generate_dpack(tmp_path, config)
 
-        content: str = (tmp_path / "sub-no-tool" / "opencode" / "agents" / "orchestrator.md").read_text()
+        content: str = (
+            tmp_path / "sub-no-tool" / "opencode" / "agents" / "orchestrator.md"
+        ).read_text()
         assert "parallel-agents" not in content
 
     def test_no_subagent_dir_without_skeleton(self, tmp_path: Path) -> None:
         """Should not create example-worker.md when no subagent skeleton."""
         generate_dpack(tmp_path, {"name": "no-sub"})
-        assert not (tmp_path / "no-sub" / "opencode" / "agents" / "example-worker.md").exists()
+        assert not (
+            tmp_path / "no-sub" / "opencode" / "agents" / "example-worker.md"
+        ).exists()
 
 
 class TestSkeletonParallelAgents:
@@ -373,14 +387,18 @@ class TestSkeletonParallelAgents:
         """Main agent should have parallel-agents: true in tools."""
         generate_dpack(tmp_path, self._config_with_parallel())
 
-        content: str = (tmp_path / "pa-test" / "opencode" / "agents" / "orchestrator.md").read_text()
+        content: str = (
+            tmp_path / "pa-test" / "opencode" / "agents" / "orchestrator.md"
+        ).read_text()
         assert "parallel-agents: true" in content
 
     def test_main_agent_has_spawn_instructions(self, tmp_path: Path) -> None:
         """Main agent should explain how to spawn parallel agents."""
         generate_dpack(tmp_path, self._config_with_parallel())
 
-        content: str = (tmp_path / "pa-test" / "opencode" / "agents" / "orchestrator.md").read_text()
+        content: str = (
+            tmp_path / "pa-test" / "opencode" / "agents" / "orchestrator.md"
+        ).read_text()
         assert "example-worker" in content
         assert '"agent":' in content
         assert '"prompts":' in content
@@ -389,7 +407,9 @@ class TestSkeletonParallelAgents:
         """Should create example-worker.md subagent file."""
         generate_dpack(tmp_path, self._config_with_parallel())
 
-        worker: Path = tmp_path / "pa-test" / "opencode" / "agents" / "example-worker.md"
+        worker: Path = (
+            tmp_path / "pa-test" / "opencode" / "agents" / "example-worker.md"
+        )
         assert worker.is_file()
         content: str = worker.read_text()
         assert "mode: subagent" in content
@@ -399,7 +419,13 @@ class TestSkeletonParallelAgents:
         """Should create example-worker.yaml parallel agent config."""
         generate_dpack(tmp_path, self._config_with_parallel())
 
-        yaml_file: Path = tmp_path / "pa-test" / "opencode" / "parallel_agents" / "example-worker.yaml"
+        yaml_file: Path = (
+            tmp_path
+            / "pa-test"
+            / "opencode"
+            / "parallel_agents"
+            / "example-worker.yaml"
+        )
         assert yaml_file.is_file()
         content: str = yaml_file.read_text()
         assert "name: example-worker" in content
@@ -411,7 +437,9 @@ class TestSkeletonParallelAgents:
         """parallel_agents should auto-create example-worker.md (implies subagents)."""
         generate_dpack(tmp_path, self._config_with_parallel())
 
-        worker: Path = tmp_path / "pa-test" / "opencode" / "agents" / "example-worker.md"
+        worker: Path = (
+            tmp_path / "pa-test" / "opencode" / "agents" / "example-worker.md"
+        )
         assert worker.is_file()
 
 
@@ -426,7 +454,9 @@ class TestSkeletonTools:
         }
         generate_dpack(tmp_path, config)
 
-        tool_file: Path = tmp_path / "tools-test" / "opencode" / "tools" / "example-tool.ts"
+        tool_file: Path = (
+            tmp_path / "tools-test" / "opencode" / "tools" / "example-tool.ts"
+        )
         assert tool_file.is_file()
         content: str = tool_file.read_text()
         assert "@opencode-ai/plugin" in content
@@ -445,7 +475,9 @@ class TestSkeletonTools:
             "skeletons": {"tools": True},
         }
         generate_dpack(tmp_path, config)
-        tool_file: Path = tmp_path / "modal-nothrow" / "opencode" / "tools" / "run-on-modal.ts"
+        tool_file: Path = (
+            tmp_path / "modal-nothrow" / "opencode" / "tools" / "run-on-modal.ts"
+        )
         assert tool_file.is_file()
         content: str = tool_file.read_text()
         assert ".nothrow()" in content
@@ -487,7 +519,9 @@ class TestToolTemplatesApi:
     def test_generated_tool_uses_execute(self, tmp_path: Path) -> None:
         """Generated example-tool.ts must use execute(), not run()."""
         generate_dpack(tmp_path, {"name": "api-test", "skeletons": {"tools": True}})
-        content: str = (tmp_path / "api-test" / "opencode" / "tools" / "example-tool.ts").read_text()
+        content: str = (
+            tmp_path / "api-test" / "opencode" / "tools" / "example-tool.ts"
+        ).read_text()
         assert "async execute(" in content
         assert "async run(" not in content
 
@@ -503,7 +537,14 @@ class TestSkeletonSkills:
         }
         generate_dpack(tmp_path, config)
 
-        skill_file: Path = tmp_path / "skills-test" / "opencode" / "skills" / "example-skill" / "SKILL.md"
+        skill_file: Path = (
+            tmp_path
+            / "skills-test"
+            / "opencode"
+            / "skills"
+            / "example-skill"
+            / "SKILL.md"
+        )
         assert skill_file.is_file()
         content: str = skill_file.read_text()
         assert "Example Skill" in content
@@ -601,7 +642,9 @@ class TestDockerfilePerPackageManager:
         config: dict[str, Any] = {"name": "pixi-path-test", "package_manager": "pixi"}
         generate_dpack(tmp_path, config)
 
-        content: str = (tmp_path / "pixi-path-test" / "docker" / "Dockerfile").read_text()
+        content: str = (
+            tmp_path / "pixi-path-test" / "docker" / "Dockerfile"
+        ).read_text()
         env_lines = [l for l in content.splitlines() if "ENV PATH=" in l]
         assert len(env_lines) == 1, f"Expected 1 ENV PATH line, got {len(env_lines)}"
         assert "/opt/pixi/.pixi/envs/default/bin" in env_lines[0]
@@ -744,7 +787,9 @@ class TestModalIntegration:
         }
         generate_dpack(tmp_path, config)
 
-        content: str = (tmp_path / "modal-hash" / "docker" / "modal_app" / "example.py").read_text()
+        content: str = (
+            tmp_path / "modal-hash" / "docker" / "modal_app" / "example.py"
+        ).read_text()
         assert "hashlib" in content
         assert "_modal_app_hash" in content
         assert "Cache buster" in content
@@ -758,7 +803,9 @@ class TestModalIntegration:
         }
         generate_dpack(tmp_path, config)
 
-        content: str = (tmp_path / "modal-conda" / "docker" / "modal_app" / "example.py").read_text()
+        content: str = (
+            tmp_path / "modal-conda" / "docker" / "modal_app" / "example.py"
+        ).read_text()
         assert "micromamba" in content
         assert "micromamba_install" in content
         assert "conda-forge" in content
@@ -774,7 +821,9 @@ class TestModalIntegration:
         }
         generate_dpack(tmp_path, config)
 
-        content: str = (tmp_path / "modal-pip" / "docker" / "modal_app" / "example.py").read_text()
+        content: str = (
+            tmp_path / "modal-pip" / "docker" / "modal_app" / "example.py"
+        ).read_text()
         assert "debian_slim" in content
         assert "pip_install" in content
         assert "micromamba" not in content
@@ -885,18 +934,44 @@ class TestGetProviderEnvVars:
 
     def test_known_provider(self) -> None:
         from dlab.create_dpack import get_provider_env_vars
+
         result: list[str] = get_provider_env_vars("anthropic/claude-sonnet-4-0")
         assert "ANTHROPIC_API_KEY" in result
 
     def test_opencode_provider(self) -> None:
         from dlab.create_dpack import get_provider_env_vars
+
         result: list[str] = get_provider_env_vars("opencode/big-pickle")
         assert "OPENCODE_API_KEY" in result
 
     def test_unknown_provider(self) -> None:
         from dlab.create_dpack import get_provider_env_vars
+
         result: list[str] = get_provider_env_vars("unknown/some-model")
         assert result == []
+
+    def test_github_copilot_enterprise_supplemental(self) -> None:
+        from dlab.create_dpack import get_provider_env_vars
+
+        result: list[str] = get_provider_env_vars(
+            "github-copilot-enterprise/gpt-5.4-mini"
+        )
+        assert "GITHUB_TOKEN" in result
+
+
+class TestSupplementalProviderEnvs:
+    """Tests for merging SUPPLEMENTAL_PROVIDER_ENVS into KNOWN_PROVIDER_ENVS."""
+
+    def test_github_copilot_enterprise_present(self) -> None:
+        from dlab.create_dpack import KNOWN_PROVIDER_ENVS
+
+        assert KNOWN_PROVIDER_ENVS.get("github-copilot-enterprise") == ["GITHUB_TOKEN"]
+
+    def test_bundle_values_not_lost(self) -> None:
+        from dlab.create_dpack import _BUNDLED, KNOWN_PROVIDER_ENVS
+
+        for provider, env_vars in _BUNDLED["provider_envs"].items():
+            assert KNOWN_PROVIDER_ENVS[provider] == env_vars
 
 
 class TestFilterModelsCustomList:
@@ -947,7 +1022,10 @@ class TestEnvExample:
     """Tests for .env.example and .gitignore generation."""
 
     def test_env_example_generated(self, tmp_path: Path) -> None:
-        generate_dpack(tmp_path, {"name": "env-test", "default_model": "anthropic/claude-sonnet-4-0"})
+        generate_dpack(
+            tmp_path,
+            {"name": "env-test", "default_model": "anthropic/claude-sonnet-4-0"},
+        )
         env_file: Path = tmp_path / "env-test" / ".env.example"
         assert env_file.exists()
         content: str = env_file.read_text()
@@ -998,12 +1076,18 @@ class TestModalInEnvFile:
     """Tests that modal is added to env files when modal_integration is on."""
 
     def test_modal_in_requirements(self, tmp_path: Path) -> None:
-        generate_dpack(tmp_path, {"name": "m-pip", "modal_integration": True, "package_manager": "pip"})
+        generate_dpack(
+            tmp_path,
+            {"name": "m-pip", "modal_integration": True, "package_manager": "pip"},
+        )
         content: str = (tmp_path / "m-pip" / "docker" / "requirements.txt").read_text()
         assert "modal" in content
 
     def test_modal_in_environment_yml(self, tmp_path: Path) -> None:
-        generate_dpack(tmp_path, {"name": "m-conda", "modal_integration": True, "package_manager": "conda"})
+        generate_dpack(
+            tmp_path,
+            {"name": "m-conda", "modal_integration": True, "package_manager": "conda"},
+        )
         content: str = (tmp_path / "m-conda" / "docker" / "environment.yml").read_text()
         assert "modal" in content
 

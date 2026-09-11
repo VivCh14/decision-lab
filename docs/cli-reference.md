@@ -38,6 +38,7 @@ dlab run --dpack PATH --data PATH [--data PATH ...] --prompt TEXT [options]
 | `--continue-dir PATH` | Resume a previous session from this directory |
 | `--rebuild` | Force rebuild Docker image even if cached |
 | `--env-file PATH` | Path to environment file (auto-detected from decision-pack `.env` if not specified) |
+| `--opencode-data-dir PATH` | Directory with OpenCode OAuth credentials (default: per-dpack under `.docker-opencode-data/`; see [`dlab auth login`](#auth-login)) |
 | `--no-sandboxing` | Run opencode locally without Docker (see below) |
 
 ### Local Mode (`--no-sandboxing`)
@@ -139,7 +140,47 @@ refresh never blocks or fails a run.
 
 ---
 
-## create-dpack
+## auth login
+
+Interactively log in to an OpenCode provider (e.g. GitHub Copilot, Anthropic, OpenAI) inside the decision-pack's Docker image, so `dlab run` can use OAuth instead of an API key.
+
+```bash
+dlab auth login --dpack PATH [options]
+```
+
+### Required Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `--dpack PATH` | Path to the decision-pack configuration directory |
+
+The OAuth session is tied to the pack's own image and pinned `opencode_version`, since credential file formats are owned by whichever opencode version writes them.
+
+### Optional Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `--env-file PATH` | Path to environment file passed to the login container (auto-detected from decision-pack `.env` if not specified) |
+| `--opencode-data-dir PATH` | Directory to persist OAuth credentials (default: `.docker-opencode-data/{dpack-name}/`, scoped per decision-pack) |
+| `--rebuild` | Force rebuild Docker image before logging in |
+
+### How It Works
+
+`dlab auth login` runs `opencode auth login` in a one-shot, throwaway container (`docker run --rm -it`) with a real terminal attached, so you can pick a provider from OpenCode's menu and complete any device-code or browser flow. Credentials are written to the resolved `--opencode-data-dir` on the host, which `dlab run` mounts at `/root/.local/share/opencode` automatically once it exists — no extra flag needed on subsequent runs of the same decision-pack.
+
+Each decision-pack gets its own default OAuth directory (`.docker-opencode-data/{dpack-name}/`, gitignored) rather than a single shared one, so packs pinning different `opencode_version`s never share a potentially incompatible `auth.json`. Pass `--opencode-data-dir` explicitly to share one login across packs intentionally.
+
+If a decision-pack's provider is both OAuth-authenticated and has a (possibly stale or invalid) API key in `.env`, `dlab run` prefers the OAuth credential — see [Docker: OAuth Authentication](docker.md#oauth-authentication).
+
+### Example
+
+```bash
+dlab auth login --dpack decision-packs/mmm
+# ... interactive provider selection, then device-code/browser login ...
+# Login complete. Credentials saved to /path/to/.docker-opencode-data/mmm-agent-oc
+
+dlab run --dpack decision-packs/mmm --data ./data --model github-copilot-enterprise/gpt-5.4-mini --prompt "..."
+```
 
 Interactive TUI wizard to create a new decision-pack directory.
 
@@ -320,6 +361,7 @@ dlab view WORK_DIR [--port PORT] [--no-open] [--export FILE]
 
 ```bash
 dlab --help
+dlab auth login --help
 dlab create-dpack --help
 dlab create-parallel-agent --help
 dlab connect --help

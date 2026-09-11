@@ -3,13 +3,13 @@ description: "Run data preparation with different models for comparison"
 timeout_minutes: 30
 failure_behavior: continue
 
-default_model: "anthropic/claude-sonnet-4-5"
+default_model: "github-copilot-enterprise/claude-sonnet-5"
 max_instances: 2
 
 # Per-instance models (used when orchestrator doesn't pass explicit models)
 instance_models:
-  - "anthropic/claude-sonnet-4-5"
-  - "google/gemini-2.5-pro"
+  - "github-copilot-enterprise/claude-sonnet-5"
+  - "github-copilot-enterprise/gemini-3.8-flash"
 
 subagent_suffix_prompt: |
   ---
@@ -67,4 +67,4 @@ summarizer_prompt: |
   Present facts only - do NOT pick a winner.
   The orchestrator will make the final decision.
 
-summarizer_model: "anthropic/claude-sonnet-4-5"
+summarizer_model: "github-copilot-enterprise/claude-sonnet-5"

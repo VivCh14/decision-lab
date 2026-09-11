@@ -21,7 +21,7 @@ from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.text import Text
 
-from dlab.config import load_dpack_config
+from dlab.config import default_opencode_data_dir, load_dpack_config
 
 # Note: Console must be created per-call (not module-level) so pytest capsys
 # can capture output. Use _make_console() in command functions.
@@ -30,13 +30,18 @@ from dlab.docker import (
     count_dangling_images,
     exec_command,
     needs_rebuild,
+    run_interactive_container,
     run_opencode,
     start_container,
     stop_container,
 )
 from dlab.create_dpack import refresh_model_cache_if_stale
 from dlab.figure_style import figure_style_enabled, figure_style_shell_exports
-from dlab.model_fallback import preflight_check
+from dlab.model_fallback import (
+    get_oauth_authenticated_providers,
+    get_oauth_env_overrides,
+    preflight_check,
+)
 from dlab.opencode_logparser import diagnose_fatal_error
 from dlab.session import copy_hook_scripts, create_session, setup_opencode_config
 from dlab.timeline import run_timeline
@@ -322,6 +327,14 @@ def _cmd_run_command(
             help="Path to environment file (passed to Docker container)",
         ),
     ] = None,
+    opencode_data_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--opencode-data-dir",
+            metavar="PATH",
+            help="OpenCode data directory containing OAuth credentials",
+        ),
+    ] = None,
     no_sandboxing: Annotated[
         bool,
         typer.Option(
@@ -348,6 +361,7 @@ def _cmd_run_command(
         continue_dir=continue_dir,
         rebuild=rebuild,
         env_file=env_file,
+        opencode_data_dir=opencode_data_dir,
         no_sandboxing=no_sandboxing,
         yes=yes,
     )
@@ -364,6 +378,7 @@ def cmd_run(
     continue_dir: str | None = None,
     rebuild: bool = False,
     env_file: str | None = None,
+    opencode_data_dir: str | None = None,
     no_sandboxing: bool = False,
     yes: bool = False,
 ) -> int:
@@ -385,6 +400,13 @@ def cmd_run(
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+
+    # Resolve the per-dpack OAuth data dir early — needed by preflight below
+    # and by the container/extra_env setup further down.
+    if opencode_data_dir is None:
+        candidate_opencode_data_dir: Path = default_opencode_data_dir(config)
+        if candidate_opencode_data_dir.is_dir():
+            opencode_data_dir = str(candidate_opencode_data_dir)
 
     # Resolve execution mode: Docker vs local
     if not no_sandboxing:
@@ -474,6 +496,7 @@ def cmd_run(
         config["config_dir"],
         env_file,
         no_sandboxing,
+        opencode_data_dir,
     )
     if pf_errors:
         for err in pf_errors:
@@ -533,6 +556,7 @@ def cmd_run(
             model,
             env_file,
             no_sandboxing,
+            opencode_data_dir=opencode_data_dir,
         )
 
         # Refresh hook scripts from decision-pack
@@ -549,6 +573,7 @@ def cmd_run(
                 orchestrator_model=model,
                 env_file=env_file,
                 no_sandboxing=no_sandboxing,
+                opencode_data_dir=opencode_data_dir,
             )
         except ValueError as e:
             err_msg: str = str(e)
@@ -675,7 +700,10 @@ def cmd_run(
                 I,
                 logs_dir_local,
                 lambda: run_opencode_local(
-                    work_dir, local_prompt, model, local_env,
+                    work_dir,
+                    local_prompt,
+                    model,
+                    local_env,
                     prelude=local_prelude,
                 ),
             )
@@ -780,16 +808,37 @@ def cmd_run(
         # Mask values that look like secrets (API keys, tokens, etc.)
         if any(
             sensitive in key.upper()
-            for sensitive in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH")
+            for sensitive in (
+                "KEY",
+                "TOKEN",
+                "SECRET",
+                "PASSWORD",
+                "CREDENTIAL",
+                "AUTH",
+            )
         ):
             display_value: str = "***"
         else:
             display_value = value
         console.print(f"{I}[dim]{key}={display_value}[/dim]")
 
+    # OAuth credentials must win over a stale/invalid .env token for the
+    # same provider, so blank the provider's env vars in the container.
+    oauth_providers: set[str] = get_oauth_authenticated_providers(opencode_data_dir)
+    extra_env.update(get_oauth_env_overrides(opencode_data_dir))
+    if oauth_providers:
+        console.print(
+            f"{I}[dim]OAuth authenticated: {', '.join(sorted(oauth_providers))}[/dim]"
+        )
+
     try:
         start_container(
-            image_name, work_dir, container_name, env_file=env_file, extra_env=extra_env
+            image_name,
+            work_dir,
+            container_name,
+            env_file=env_file,
+            extra_env=extra_env,
+            opencode_data_dir=opencode_data_dir,
         )
         console.print(f"{I}[green]Container started:[/green] {container_name}")
     except ValueError as e:
@@ -869,7 +918,10 @@ def cmd_run(
             I,
             logs_dir_path,
             lambda: run_opencode(
-                container_name, resolved_prompt, model, prelude=style_prelude,
+                container_name,
+                resolved_prompt,
+                model,
+                prelude=style_prelude,
             ),
         )
         if stderr:
@@ -928,6 +980,134 @@ def cmd_run(
         else:
             console.print(f"{I}[bold red]Done (exit code {exit_code}).[/bold red]")
 
+    return exit_code
+
+
+auth_app = typer.Typer(help="Manage OpenCode authentication credentials.")
+app.add_typer(auth_app, name="auth")
+
+
+@auth_app.command("login")
+def _cmd_auth_login_command(
+    dpack: Annotated[
+        str,
+        typer.Option(
+            "--dpack", metavar="PATH", help="Path to decision-pack config directory"
+        ),
+    ],
+    env_file: Annotated[
+        str | None,
+        typer.Option(
+            "--env-file",
+            metavar="PATH",
+            help="Path to environment file (passed to the login container)",
+        ),
+    ] = None,
+    opencode_data_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--opencode-data-dir",
+            metavar="PATH",
+            help="Directory to persist OAuth credentials "
+            "(default: per-dpack under .docker-opencode-data/)",
+        ),
+    ] = None,
+    rebuild: Annotated[
+        bool,
+        typer.Option("--rebuild", help="Force rebuild Docker image"),
+    ] = False,
+) -> None:
+    """Interactively log in to an OpenCode provider inside the decision-pack's image."""
+    exit_code = cmd_auth_login(
+        dpack=dpack,
+        env_file=env_file,
+        opencode_data_dir=opencode_data_dir,
+        rebuild=rebuild,
+    )
+    raise typer.Exit(code=exit_code)
+
+
+def cmd_auth_login(
+    dpack: str,
+    env_file: str | None = None,
+    opencode_data_dir: str | None = None,
+    rebuild: bool = False,
+) -> int:
+    """
+    Run `opencode auth login` interactively inside the decision-pack's Docker image.
+
+    Returns
+    -------
+    int
+        Exit code (0 for success, non-zero for failure).
+    """
+    try:
+        config: dict[str, Any] = load_dpack_config(dpack)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    from dlab.local import is_docker_available
+
+    if not is_docker_available():
+        err: Console = Console(stderr=True, highlight=False)
+        err.print(
+            "Oops, couldn't find a running Docker daemon. "
+            "decision-lab attempts to use Docker for sandboxing "
+            "and locked environments by default.\n"
+        )
+        return 1
+
+    if not env_file:
+        dpack_env: Path = Path(dpack).resolve() / ".env"
+        if dpack_env.exists():
+            env_file = str(dpack_env)
+
+    if opencode_data_dir is None:
+        opencode_data_dir = str(default_opencode_data_dir(config))
+    Path(opencode_data_dir).mkdir(parents=True, exist_ok=True)
+
+    console: Console = _make_console()
+    image_name: str = config["docker_image_name"]
+    opencode_version: str = config["opencode_version"]
+
+    should_rebuild: bool
+    rebuild_reason: str
+    if rebuild:
+        should_rebuild, rebuild_reason = True, "--rebuild flag passed"
+    else:
+        should_rebuild, rebuild_reason = needs_rebuild(
+            config["config_dir"],
+            image_name,
+            opencode_version,
+        )
+
+    if should_rebuild:
+        console.print(f"[yellow]Building image:[/yellow] {image_name}")
+        console.print(f"[dim]Reason: {rebuild_reason}[/dim]")
+        try:
+            build_image(config["config_dir"], image_name, opencode_version)
+        except ValueError as e:
+            console.print(f"[bold red]Error:[/bold red] {e}", highlight=False)
+            return 1
+        console.print("[green]Image built.[/green]")
+    else:
+        console.print(f"[dim]Image:[/dim] {image_name} [dim](cached)[/dim]")
+
+    console.print(f"[dim]Credentials will persist to:[/dim] {opencode_data_dir}")
+    console.print()
+
+    exit_code: int = run_interactive_container(
+        image_name,
+        ["opencode", "auth", "login"],
+        env_file=env_file,
+        opencode_data_dir=opencode_data_dir,
+    )
+    if exit_code == 0:
+        console.print(
+            f"\n[bold green]Login complete.[/bold green] "
+            f"Credentials saved to {opencode_data_dir}"
+        )
     return exit_code
 
 
