@@ -1,0 +1,31 @@
+name: modeler
+description: "Develop and scale different forecasting model families in parallel; each builds one model file from the series analysis."
+timeout_minutes: 120
+failure_behavior: continue
+
+# default_model and summarizer_model are injected from config.yaml at session setup
+max_instances: 4
+
+subagent_suffix_prompt: |
+  ---
+
+  When you are done, write summary.md following the schema in your system prompt.
+  The model file you ran on the full data must exist at the path named in summary.md.
+  If development failed, write summary.md with the failure diagnosis anyway.
+
+summarizer_prompt: |
+  You are a consolidator reviewing N independent modeling agents. Each built one
+  model family for the same set of time series on Databricks.
+
+  Read these summary files (do NOT search for others):
+  {summary_paths}
+
+  Write the consolidated comparison to the output path provided above.
+
+  Include:
+  1. A table: modeler | model family | model file | backtest table | full-run mean and median sMAPE | failed folds
+  2. How each model derives its structure and parameters from the analysis
+  3. Failures and limitations, stated factually
+  4. Which model(s) the orchestrator should verify with a score run and why
+
+  Report only numbers that appear in the summaries; mark missing values as missing.

@@ -1,0 +1,12 @@
+# databricks-connect must match the cluster's Databricks Runtime (major.minor).
+# Override at build time: --build-arg DATABRICKS_CONNECT_VERSION=...
+numpy
+pandas
+scipy
+statsmodels
+pymc
+arviz
+nutpie
+matplotlib
+pyarrow
+pytest

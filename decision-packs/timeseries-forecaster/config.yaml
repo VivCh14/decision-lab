@@ -1,0 +1,21 @@
+name: timeseries-forecaster
+description: >
+  Batch time series analysis, Bayesian backtesting and forecasting on Databricks.
+  Reads series (and optional regressor) tables from Unity Catalog, analyses every
+  series, lets parallel modeling agents build models whose structure and
+  parameters come from the analysis, and writes backtest forecast-vs-actual and
+  forecast tables back to Unity Catalog.
+
+docker_image_name: dlab-timeseries-forecaster
+default_model: anthropic/claude-sonnet-4-5
+requires_data: false
+requires_prompt: true
+
+use_dlab_plot_style: true
+
+# models:
+#   modeler: anthropic/claude-sonnet-4-5       # parallel modeling agents
+#   consolidator: anthropic/claude-haiku-4-5
+
+hooks:
+  pre-run: check_databricks.sh

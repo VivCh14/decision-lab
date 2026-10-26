@@ -76,3 +76,5 @@ ab_testing/
 test/
 
 .notes/
+
+.databricks
