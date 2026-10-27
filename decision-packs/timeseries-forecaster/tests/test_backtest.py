@@ -8,7 +8,7 @@ import pytest
 
 import seasonal_naive
 from tsf_lib.analysis import analyze_series
-from tsf_lib.backtest import backtest_series, forecast_series, rolling_origins, score_backtest, smape
+from tsf_lib.backtest import BACKTEST_COLUMNS, backtest_series, forecast_series, rolling_origins, score_backtest, smape
 from tsf_lib.worker import parse_analysis
 
 
@@ -92,3 +92,10 @@ def test_score_backtest_counts_failed_folds(monthly_series: pd.DataFrame) -> Non
     assert scores.loc["good", "n_failed_folds"] == 0
     assert scores.loc["bad", "n_failed_folds"] == 2
     assert np.isnan(scores.loc["bad", "smape"])
+
+
+def test_median_score_falls_back_to_mean_for_point_models() -> None:
+    row = {c: None for c in BACKTEST_COLUMNS}
+    row.update(series_id="a", model="naive", fold=0, actual=10.0, forecast_mean=8.0, forecast_median=None)
+    scores = score_backtest(pd.DataFrame([row], columns=BACKTEST_COLUMNS))
+    assert scores.loc[0, "smape_median"] == scores.loc[0, "smape"]

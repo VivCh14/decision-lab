@@ -10,7 +10,10 @@ where ``train`` has columns ``date`` and ``value`` (uniform grid, no gaps),
 dates not after the forecast origin (or ``None``), ``analysis`` is the
 series' analysis row (dict) and ``params`` is a free-form dict. It must return
 a frame with ``horizon`` rows and a ``forecast_mean`` column, plus optional
-``forecast_median``, ``forecast_lower`` and ``forecast_upper``.
+``forecast_median``, ``forecast_lower`` and ``forecast_upper``. Sampling-based models should also
+return the constant columns ``rhat_max``, ``ess_min`` and ``divergence_pct``
+(percent of divergent draws); ``score_backtest`` flags folds exceeding
+``RHAT_MAX`` / ``ESS_MIN`` / ``DIVERGENCE_PCT_MAX``.
 
 The output tables hold forecasts next to actuals (backtest) so any metric can
 be computed from them afterwards; ``smape`` is provided as the default.
@@ -40,6 +43,9 @@ BACKTEST_COLUMNS: dict[str, str] = {
     "forecast_lower": "double",
     "forecast_upper": "double",
     "interval_level": "double",
+    "rhat_max": "double",
+    "ess_min": "double",
+    "divergence_pct": "double",
     "error": "string",
 }
 
@@ -47,7 +53,15 @@ FORECAST_COLUMNS: dict[str, str] = {
     name: dtype for name, dtype in BACKTEST_COLUMNS.items() if name not in ("fold", "actual")
 }
 
-_FORECAST_FIELDS = ("forecast_mean", "forecast_median", "forecast_lower", "forecast_upper")
+_FORECAST_FIELDS = (
+    "forecast_mean", "forecast_median", "forecast_lower", "forecast_upper",
+    "rhat_max", "ess_min", "divergence_pct",
+)
+
+RHAT_MAX = 1.1
+ESS_MIN = 200.0
+DIVERGENCE_PCT_MAX = 1.0
+NONCONVERGED_SHARE_MAX = 0.1
 
 
 def smape(actual: np.ndarray, forecast: np.ndarray) -> float:
@@ -291,19 +305,37 @@ def score_backtest(backtest: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        Columns ``series_id``, ``model``, ``smape``, ``n_points``,
-        ``n_failed_folds``.
+        Columns ``series_id``, ``model``, ``smape`` (mean forecast), ``smape_median``
+        (median forecast; point-forecast models fall back to their mean), ``n_folds``, ``n_points``,
+        ``n_failed_folds``, ``n_nonconverged_folds``, ``max_rhat``, ``min_ess``.
     """
     rows = []
     for (series_id, model), group in backtest.groupby(["series_id", "model"], dropna=False):
         scored = group.dropna(subset=["actual", "forecast_mean"])
+        fold_diag = group.dropna(subset=["fold"]).groupby("fold")[["rhat_max", "ess_min", "divergence_pct"]].first()
+        bad = (
+            (fold_diag["rhat_max"] > RHAT_MAX)
+            | (fold_diag["ess_min"] < ESS_MIN)
+            | (fold_diag["divergence_pct"] > DIVERGENCE_PCT_MAX)
+        )
+        with_median = group.assign(
+            forecast_median=group["forecast_median"].where(group["forecast_median"].notna(), group["forecast_mean"])
+        ).dropna(subset=["actual", "forecast_median"])
         rows.append(
             {
                 "series_id": series_id,
                 "model": model,
                 "smape": smape(scored["actual"].to_numpy(), scored["forecast_mean"].to_numpy()),
+                "smape_median": (
+                    smape(with_median["actual"].to_numpy(), with_median["forecast_median"].to_numpy())
+                    if len(with_median) else np.nan
+                ),
+                "n_folds": int(group["fold"].nunique()),
                 "n_points": int(len(scored)),
                 "n_failed_folds": int(group.loc[group["error"].notna(), "fold"].nunique(dropna=False)),
+                "n_nonconverged_folds": int(bad.sum()),
+                "max_rhat": float(fold_diag["rhat_max"].max()) if fold_diag["rhat_max"].notna().any() else np.nan,
+                "min_ess": float(fold_diag["ess_min"].min()) if fold_diag["ess_min"].notna().any() else np.nan,
             }
         )
     return pd.DataFrame(rows)

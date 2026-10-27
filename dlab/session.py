@@ -50,7 +50,8 @@ INSTANCE_ENV_EXACT: list[str] = [
 ]
 # Prefixes whose variables are always forwarded: dlab config (dpacks rely on
 # DLAB_* forwarding), opencode's own config, and cloud-provider credential
-# families whose names do not end in _API_KEY (AWS/Azure/Vertex/etc.).
+# families whose names do not end in _API_KEY (AWS/Azure/Vertex/etc.), and
+# Modal tokens so subagents can reach packs' Modal compute.
 INSTANCE_ENV_PREFIXES: list[str] = [
     "DLAB_",
     "OPENCODE_",
@@ -60,6 +61,7 @@ INSTANCE_ENV_PREFIXES: list[str] = [
     "VERTEX_",
     "CLOUDFLARE_",
     "GITHUB_",
+    "MODAL_",
 ]
 
 

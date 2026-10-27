@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 import pymc as pm
 
+from tsf_lib.diagnostics import sampler_diagnostics
+from tsf_lib.quality import trim_to_level_shift
 from tsf_lib.regressors import lagged_regressor_matrix
 
 
@@ -49,6 +51,8 @@ def fit_forecast(
     likelihood = params.get("likelihood") or (rec.get("likelihood_candidates") or ["normal"])[0]
     level = float(params.get("interval_level", 0.8))
 
+    train = trim_to_level_shift(train, rec) if params.get("trim_level_shift", True) else train
+    robust = bool(params.get("robust", rec.get("robust_likelihood", False)))
     y = train["value"].to_numpy(dtype=float)
     n, horizon = len(y), len(future_dates)
     t = np.arange(n + horizon)
@@ -67,8 +71,13 @@ def fit_forecast(
     with pm.Model():
         intercept = pm.Normal("intercept", np.log(y.mean() + 1.0) if count_model else 0.0, 1.0)
         slope = pm.Normal("slope", 0.0, 0.5 if count_model else 1.0) if rec.get("trend") != "none" else 0.0
-        beta = pm.Normal("beta", 0.0, 0.5, shape=design_train.shape[1])
-        eta = intercept + slope * t_train + pm.math.dot(design_train, beta)
+        k = design_train.shape[1]
+        has_beta = k > 0
+        if has_beta:
+            beta = pm.Normal("beta", 0.0, 0.5, shape=k)
+            eta = intercept + slope * t_train + pm.math.dot(design_train, beta)
+        else:
+            eta = intercept + slope * t_train + np.zeros(design_train.shape[0])
         if count_model:
             mu = pm.math.exp(eta)
             if likelihood == "poisson":
@@ -78,7 +87,11 @@ def fit_forecast(
                 pm.NegativeBinomial("obs", mu=mu, alpha=phi, observed=z)
         else:
             sigma = pm.HalfNormal("sigma", float(rec.get("noise_prior_sd") or 1.0))
-            pm.Normal("obs", eta, sigma, observed=z)
+            if robust:
+                nu = pm.Gamma("nu", 2.0, 0.1)
+                pm.StudentT("obs", nu=nu + 1.0, mu=eta, sigma=sigma, observed=z)
+            else:
+                pm.Normal("obs", eta, sigma, observed=z)
         idata = pm.sample(
             draws=int(params.get("draws", 300)),
             tune=int(params.get("tune", 300)),
@@ -88,13 +101,18 @@ def fit_forecast(
             compute_convergence_checks=False,
         )
 
+    diagnostics = sampler_diagnostics(idata)
     posterior = idata.posterior
     posterior = posterior.to_dataset() if hasattr(posterior, "to_dataset") else posterior
     post = posterior.stack(sample=("chain", "draw"))
     b0 = post["intercept"].to_numpy()
     b1 = post["slope"].to_numpy() if "slope" in post else np.zeros_like(b0)
-    bs = post["beta"].to_numpy()  # (k, samples)
-    eta_future = b0[None, :] + b1[None, :] * t_future[:, None] + design_future @ bs
+    if has_beta:
+        bs = post["beta"].to_numpy()  # (k, samples)
+        reg_term = design_future @ bs
+    else:
+        reg_term = np.zeros((len(t_future), b0.shape[0]))
+    eta_future = b0[None, :] + b1[None, :] * t_future[:, None] + reg_term
     rng = np.random.default_rng()
     if count_model:
         mu_future = np.exp(eta_future)
@@ -104,7 +122,12 @@ def fit_forecast(
             phi_s = post["phi"].to_numpy()[None, :]
             draws = rng.negative_binomial(phi_s, phi_s / (phi_s + mu_future))
     else:
-        draws = eta_future + rng.normal(size=eta_future.shape) * post["sigma"].to_numpy()[None, :]
+        noise = (
+            rng.standard_t(post["nu"].to_numpy()[None, :] + 1.0, size=eta_future.shape)
+            if robust
+            else rng.normal(size=eta_future.shape)
+        )
+        draws = eta_future + noise * post["sigma"].to_numpy()[None, :]
         draws = draws * scale + center
         if transform == "log1p":
             draws = np.expm1(draws)
@@ -115,5 +138,6 @@ def fit_forecast(
             "forecast_median": np.median(draws, axis=1),
             "forecast_lower": np.quantile(draws, lo, axis=1),
             "forecast_upper": np.quantile(draws, hi, axis=1),
+            **diagnostics,
         }
     )

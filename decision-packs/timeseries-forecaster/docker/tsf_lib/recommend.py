@@ -67,7 +67,9 @@ def recommend_params(row: dict[str, Any]) -> dict[str, Any]:
     dict
         Recommended ``season_length``, ``fourier_terms``, ``ar_order``,
         ``differencing``, ``trend``, ``likelihood_candidates``, ``transform``,
-        prior scales for level / noise, ``min_train_size`` and ``evidence``.
+        prior scales for level / noise, ``min_train_size``, ``robust_likelihood``
+        (outliers present), ``train_from_date`` (start of the latest level
+        shift, else ``None``) and ``evidence``.
     """
     season_length, season_evidence = _season_length(row)
     strength = row.get("stl_strength") or 0.0
@@ -101,6 +103,8 @@ def recommend_params(row: dict[str, Any]) -> dict[str, Any]:
         "positive_scale": float(positive_scale) if _finite(positive_scale) else None,
         "noise_prior_sd": max(std, 1e-6),
         "min_train_size": int(min_train),
+        "robust_likelihood": bool((row.get("n_outliers") or 0) > 0),
+        "train_from_date": row.get("level_shift_date"),
         "evidence": {
             "seasonality_agreement": row.get("seasonality_agreement"),
             "stl_strength": row.get("stl_strength"),

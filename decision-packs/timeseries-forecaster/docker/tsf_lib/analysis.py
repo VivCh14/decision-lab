@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 from scipy import signal
 
+from .quality import detect_quality_issues
 from .recommend import recommend_params
 from .timegrid import (
     FREQUENCIES,
@@ -72,6 +73,10 @@ ANALYSIS_COLUMNS: dict[str, str] = {
     "trend_pvalue": "double",
     "trend_total_pct_change": "double",
     "data_quality_flag": "string",
+    "quality_issues": "string",
+    "n_outliers": "int",
+    "outlier_dates": "string",
+    "level_shift_date": "string",
     "recommended_params": "string",
     "stage_errors": "string",
     "warnings": "string",
@@ -559,6 +564,11 @@ def analyze_series(df: pd.DataFrame, series_id: str, alpha: float = 0.05, max_la
 
     row.update(describe_values(y))
     row["data_quality_flag"] = classify_data_quality(len(y), row["pct_zero"])
+    quality = detect_quality_issues(window, nominal, n_missing)
+    row["quality_issues"] = json.dumps(quality["issues"])
+    row["n_outliers"] = quality["n_outliers"]
+    row["level_shift_date"] = quality["level_shift_date"]
+    row["outlier_dates"] = json.dumps(quality["outlier_dates"])
 
     def run_stage(name: str, func: Any) -> dict[str, Any] | None:
         try:

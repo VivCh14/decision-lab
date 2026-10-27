@@ -36,6 +36,8 @@ def test_recovers_seasonal_pattern() -> None:
     assert len(out) == 6 and np.isfinite(out["forecast_mean"]).all()
     assert (out["forecast_lower"] <= out["forecast_median"]).all() and (out["forecast_median"] <= out["forecast_upper"]).all()
     assert smape(df["value"].iloc[54:].to_numpy(), out["forecast_mean"].to_numpy()) < 10
+    assert {"rhat_max", "ess_min", "divergence_pct"} <= set(out.columns)
+    assert 0.99 < out["rhat_max"].iloc[0] < 1.5 and out["ess_min"].iloc[0] > 10
 
 
 @pytest.mark.slow
@@ -46,3 +48,29 @@ def test_count_series_through_backtest() -> None:
         df, None, analysis, bayes_fourier_regression.fit_forecast, "bayes", "c", 6, 1, 6, {**PARAMS, "likelihood": "negative_binomial"}
     )
     assert out["error"].isna().all() and (out["forecast_mean"] > 0).all()
+
+
+@pytest.mark.slow
+def test_no_design_columns() -> None:
+    rng = np.random.default_rng(2)
+    dates = pd.date_range("2022-01-31", periods=8, freq="ME")
+    df = pd.DataFrame({"date": dates, "value": 50 + rng.normal(0, 2, 8)})
+    analysis = parse_analysis(json.dumps(analyze_series(df, "short"), default=str))
+    out = bayes_fourier_regression.fit_forecast(
+        df.iloc[:6], pd.DatetimeIndex(df["date"].iloc[6:]), None, {**analysis, "seasonal_periods": []}, PARAMS
+    )
+    assert len(out) == 2 and np.isfinite(out["forecast_mean"]).all()
+
+
+@pytest.mark.slow
+def test_robust_likelihood_handles_outlier_and_level_shift() -> None:
+    df = _seasonal()
+    df.loc[10, "value"] *= 6
+    df.loc[36:, "value"] += 80
+    analysis = parse_analysis(json.dumps(analyze_series(df, "q"), default=str))
+    assert analysis["recommended"]["robust_likelihood"] and analysis["recommended"]["train_from_date"]
+    out = bayes_fourier_regression.fit_forecast(
+        df.iloc[:54], pd.DatetimeIndex(df["date"].iloc[54:]), None, analysis, PARAMS
+    )
+    assert np.isfinite(out["forecast_mean"]).all()
+    assert smape(df["value"].iloc[54:].to_numpy(), out["forecast_mean"].to_numpy()) < 15

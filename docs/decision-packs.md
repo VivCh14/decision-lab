@@ -302,7 +302,7 @@ dlab install ./my-dpack
 
 All environment variables starting with `DLAB_` are automatically forwarded from the host to the Docker container. decision-packs can use these for runtime configuration without framework changes.
 
-For example, the MMM decision-pack uses `DLAB_FIT_MODEL_LOCALLY=1` to switch between Modal cloud fitting and local fitting. The generated modal deploy hook uses `DLAB_RUN_MODAL_TOOL_LOCALLY`.
+For example, the MMM decision-pack uses `DLAB_FIT_MODEL_LOCALLY=1` to switch between Modal cloud fitting and local fitting. The timeseries-forecaster pack reuses the same variable: with it set (or without Modal tokens) its series batches run in a local process pool (`DLAB_TSF_WORKERS` sets the size) instead of `modal.Function.map`. The generated modal deploy hook uses `DLAB_RUN_MODAL_TOOL_LOCALLY`.
 
 To use from the command line:
 

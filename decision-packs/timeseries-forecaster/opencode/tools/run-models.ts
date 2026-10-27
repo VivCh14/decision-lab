@@ -1,0 +1,31 @@
+import { tool } from "@opencode-ai/plugin"
+
+export default tool({
+  description: `Backtest (rolling origin) one model file over many series in batches, in ONE call, on Modal or a local process pool. Writes backtest_<model_name>.parquet (columns include series_id, fold, origin_date, target_date, actual, forecast_mean, error). dev=true writes backtest_<model_name>_dev.parquet for development runs on a sample.`,
+
+  args: {
+    model_file: tool.schema.string().describe("Path to the model .py file defining fit_forecast"),
+    model_name: tool.schema.string().describe("Short model name used in output file names"),
+    horizon: tool.schema.number().describe("Forecast horizon in periods"),
+    n_folds: tool.schema.number().optional().describe("Rolling-origin folds for backtests (default 1)"),
+    step: tool.schema.number().optional().describe("Periods between fold origins (default 1)"),
+    params: tool.schema.record(tool.schema.string(), tool.schema.any()).optional().describe("Extra parameters passed to fit_forecast"),
+    series_ids: tool.schema.array(tool.schema.string()).optional().describe("Restrict to these series (default: all)"),
+    batch_size: tool.schema.number().optional().describe("Series per batch (default: chosen automatically)"),
+    dev: tool.schema.boolean().optional().describe("Mark as development run (adds _dev to the file name)"),
+    work_dir: tool.schema.string().optional().describe("Directory for the output parquet files (default: current directory)"),
+  },
+
+  async execute(args) {
+    const cmd = `python -m tsf_lib.cli backtest --args '${JSON.stringify(args).replace(/'/g, "'\\''")}'`
+    const result = await Bun.$`sh -c ${cmd}`.nothrow()
+    const stdout = result.stdout.toString().trim()
+    const stderr = result.stderr.toString()
+
+    if (result.exitCode !== 0) {
+      return `ERROR (exit code ${result.exitCode}):\n${stderr}\n\nStdout:\n${stdout}`
+    }
+
+    return stdout
+  },
+})
