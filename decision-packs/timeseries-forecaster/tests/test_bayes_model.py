@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 import bayes_fourier_regression
+import intermittent_hurdle
 from tsf_lib.analysis import analyze_series
 from tsf_lib.backtest import backtest_series, smape
 from tsf_lib.worker import parse_analysis
@@ -74,3 +75,17 @@ def test_robust_likelihood_handles_outlier_and_level_shift() -> None:
     )
     assert np.isfinite(out["forecast_mean"]).all()
     assert smape(df["value"].iloc[54:].to_numpy(), out["forecast_mean"].to_numpy()) < 15
+
+
+@pytest.mark.slow
+def test_hurdle_model_on_intermittent_counts() -> None:
+    rng = np.random.default_rng(3)
+    dates = pd.date_range("2019-01-31", periods=60, freq="ME")
+    values = np.where(rng.random(60) < 0.25, rng.poisson(12, 60), 0).astype(float)
+    df = pd.DataFrame({"date": dates, "value": values})
+    analysis = parse_analysis(json.dumps(analyze_series(df, "i"), default=str))
+    out = intermittent_hurdle.fit_forecast(df.iloc[:54], pd.DatetimeIndex(df["date"].iloc[54:]), None, analysis, PARAMS)
+    assert len(out) == 6 and np.isfinite(out["forecast_mean"]).all()
+    assert (out["forecast_median"] <= out["forecast_mean"] + 1e-9).all()
+    assert (out["forecast_lower"] >= 0).all() and out["forecast_mean"].iloc[0] > 0
+    assert {"rhat_max", "ess_min", "divergence_pct"} <= set(out.columns)

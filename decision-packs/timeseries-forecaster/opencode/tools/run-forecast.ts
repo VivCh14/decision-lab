@@ -12,7 +12,8 @@ export default tool({
     params: tool.schema.record(tool.schema.string(), tool.schema.any()).optional().describe("Extra parameters passed to fit_forecast"),
     series_ids: tool.schema.array(tool.schema.string()).optional().describe("Restrict to these series (default: all)"),
     batch_size: tool.schema.number().optional().describe("Series per batch (default: chosen automatically)"),
-    work_dir: tool.schema.string().optional().describe("Directory for the output parquet files (default: current directory)"),
+    output_dir: tool.schema.string().optional().describe("Directory for output files (default: forecasts/ under the current directory). Parallel instances should pass their own instance directory."),
+    work_dir: tool.schema.string().optional().describe("Directory holding analysis.parquet and inputs.json, normally the orchestrator directory (default: current directory)"),
   },
 
   async execute(args) {

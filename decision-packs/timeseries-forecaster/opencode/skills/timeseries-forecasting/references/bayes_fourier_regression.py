@@ -10,7 +10,7 @@ import pandas as pd
 import pymc as pm
 
 from tsf_lib.diagnostics import sampler_diagnostics
-from tsf_lib.quality import trim_to_level_shift
+from tsf_lib.quality import bound_draws, trim_to_level_shift
 from tsf_lib.regressors import lagged_regressor_matrix
 
 
@@ -131,6 +131,7 @@ def fit_forecast(
         draws = draws * scale + center
         if transform == "log1p":
             draws = np.expm1(draws)
+        draws = bound_draws(draws, y)
     lo, hi = (1 - level) / 2, 1 - (1 - level) / 2
     return pd.DataFrame(
         {

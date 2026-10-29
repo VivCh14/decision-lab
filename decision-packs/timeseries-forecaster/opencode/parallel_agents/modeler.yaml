@@ -1,6 +1,8 @@
 name: modeler
 description: "Develop and scale different forecasting model families in parallel; each builds one model file from the series analysis."
-timeout_minutes: 120
+# 30, not 120: one stalled instance blocks the orchestrator's parallel-agents
+# call for the whole timeout. A 31-series MCMC plan completed in ~4 minutes.
+timeout_minutes: 30
 failure_behavior: continue
 
 # default_model and summarizer_model are injected from config.yaml at session setup
@@ -9,9 +11,29 @@ max_instances: 4
 subagent_suffix_prompt: |
   ---
 
-  When you are done, write summary.md following the schema in your system prompt.
-  The model file you ran on the full data must exist at the path named in summary.md.
+  When you are done, write summary.md following the schema in your system prompt,
+  starting with the exact key-value block and then the named sections.
+
+  Every path in that block must be ABSOLUTE: your instance directory was seeded with a
+  byte-identical copy of the orchestrator's working directory, so a bare filename does
+  not identify your output. The model file you ran on the full data must exist at the
+  path you name.
+
+  Report n_target_series_received and n_series_modeled, and list your scope in full -
+  never an abbreviated list ending in "...". The orchestrator reconciles plan coverage
+  from these numbers.
+
+  Success is n_error_rows == 0. If every row errored, report that instead of a sMAPE.
   If development failed, write summary.md with the failure diagnosis anyway.
+
+  Write summary.md as soon as the full backtest exists, then enrich it. Sessions can
+  die between two tool calls, and a backtest with no summary is invisible to the
+  orchestrator no matter how good it is.
+
+  Use the run-models / run-forecast / score-models / compute-metrics tools. Do not
+  write a driver script against tsf_lib and do not set output_dir.
+
+  ---
 
 summarizer_prompt: |
   You are a consolidator reviewing N independent modeling agents. Each built one
@@ -23,9 +45,12 @@ summarizer_prompt: |
   Write the consolidated comparison to the output path provided above.
 
   Include:
-  1. A table: modeler | model family | model file | backtest file | full-run mean and median sMAPE (and median-forecast sMAPE) | failed folds | non-converged folds | median interval coverage
+  1. A table: modeler | model family | model file | backtest file | series received and modelled | n_error_rows | full-run mean and median sMAPE (and median-forecast sMAPE) | failed folds | non-converged folds and share | implausible_mean_series | median interval coverage
   2. How each model derives its structure and parameters from the analysis
   3. Failures, convergence problems, calibration and data-quality handling, stated factually
-  4. Which model(s) the orchestrator should verify with a score run and why
+  4. Coverage reconciliation: the series each modeler reports it modelled, whether the
+     scopes overlap, and whether together they cover the full set. Say plainly when the
+     counts do not reconcile - do not silently sum them.
+  5. Which model(s) the orchestrator should verify with a score run and why
 
   Report only numbers that appear in the summaries; mark missing values as missing.

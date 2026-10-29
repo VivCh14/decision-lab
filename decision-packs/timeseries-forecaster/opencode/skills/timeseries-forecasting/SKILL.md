@@ -48,6 +48,24 @@ def fit_forecast(train, future_dates, regressors, analysis, params) -> pd.DataFr
   also add the constant columns from `tsf_lib.diagnostics.sampler_diagnostics(idata)`
   (`rhat_max`, `ess_min`, `divergence_pct`); `score-models` counts folds above
   R-hat 1.1, below ESS 200 or above 1% divergences as non-converged.
+- `tsf_lib.quality.bound_draws(draws, history)` clips predictive draws to a plausible range; use it after exp/expm1 back-transforms and heavy-tailed likelihoods. `run-models`, `run-forecast` and `select-models` report `implausible_mean_series` (mean outside its own interval).
+
+### MANDATORY: guard the posterior before stacking
+
+Under the installed arviz, `idata.posterior` can be a `DataTree`, which has no
+`.stack`. Code that stacks it directly dies with
+`'DataTree' object has no attribute 'stack'` on every fold, and because
+`run-models` reports that per row you get a backtest file where every row is an
+error. Always convert first:
+
+```python
+posterior = idata.posterior
+posterior = posterior.to_dataset() if hasattr(posterior, "to_dataset") else posterior
+post = posterior.stack(sample=("chain", "draw"))
+```
+
+The same guard applies to `posterior_predictive` and `sample_stats`. Every
+reference template in `references/` already does this; copy it, do not drop it.
 
 The file runs inside worker containers (Modal or local processes): import only
 packages installed in the image, keep it self-contained (plus `tsf_lib`), no file or network access, no global
@@ -86,6 +104,7 @@ Pick methods that fit the analysis; run several in parallel and compare by sMAPE
 |---|---|---|
 | Seasonal naive / last value | always run as the baseline every model must beat | `references/seasonal_naive.py` |
 | Bayesian regression (trend + Fourier + lagged regressors; Normal, Poisson or NegBin) | default Bayesian model, counts or continuous | `references/bayes_fourier_regression.py` |
+| Hurdle (Bernoulli occurrence x log-normal size) | intermittent or zero-heavy series where a mean forecast is rarely zero; score it with `smape_median` | `references/intermittent_hurdle.py` |
 | Intermittent models (Croston/SBA style, zero-inflated NegBin) | `demand_class` intermittent or lumpy, high `pct_zero` | write from the pieces above |
 | Local level / seasonal state-space (statsmodels or PyMC) | evolving level or seasonality, non-stationary series | write from the pieces above |
 | Hierarchical pooling over similar series | many short series | only if per-series fits are too weak |

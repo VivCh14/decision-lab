@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 
 from tsf_lib.analysis import analyze_series
-from tsf_lib.quality import detect_jumps, detect_quality_issues
+from tsf_lib.backtest import implausible_rows
+from tsf_lib.quality import bound_draws, detect_jumps, detect_quality_issues
 
 
 def _grid(values: np.ndarray) -> pd.DataFrame:
@@ -67,3 +68,21 @@ def test_trim_to_level_shift() -> None:
     assert len(trim_to_level_shift(grid, {**rec, "min_train_size": 30})) == 60
     assert len(trim_to_level_shift(grid.iloc[:30], rec)) == 30
     assert len(trim_to_level_shift(grid, {})) == 60
+
+
+def test_bound_draws_limits_blowups_and_keeps_nonnegative() -> None:
+    history = np.array([10.0, 20.0, 15.0])
+    out = bound_draws(np.array([-500.0, 12.0, 1e9]), history)
+    assert out[0] == 0.0 and out[1] == 12.0 and out[2] == 20.0 + 10.0 * 10.0
+
+
+def test_implausible_rows_flags_mean_outside_interval() -> None:
+    frame = pd.DataFrame(
+        {
+            "series_id": ["a", "b"],
+            "forecast_mean": [5.0, 1e6],
+            "forecast_lower": [1.0, 1.0],
+            "forecast_upper": [9.0, 9.0],
+        }
+    )
+    assert implausible_rows(frame)["series_id"].tolist() == ["b"]

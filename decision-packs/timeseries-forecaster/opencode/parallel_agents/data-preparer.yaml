@@ -1,0 +1,46 @@
+name: data-preparer
+description: "Run data preparation with different models for comparison"
+timeout_minutes: 30
+failure_behavior: continue
+
+default_model: "github-copilot-enterprise/claude-sonnet-5"
+max_instances: 2
+
+instance_models:
+  - "github-copilot-enterprise/claude-sonnet-5"
+  - "github-copilot-enterprise/gemini-3.8-flash"
+
+subagent_suffix_prompt: |
+  ---
+
+  Write summary.md with your complete results, following the structure in your system prompt:
+  Status / Column Names (USE THESE EXACTLY) / Files / Dataset Overview / Data Quality /
+  Cleaning Applied / Per-Series Quality Classification / Regressor Coverage /
+  Fold Feasibility / Series Not Fit For Modeling / Issues Encountered / Recommendations.
+
+  Report ABSOLUTE paths for every file you produced: your instance directory was seeded
+  with a copy of the orchestrator's working directory, so a bare filename does not
+  identify your output.
+
+  Also write cleaned_series.parquet (and cleaned_regressors.parquet when a regressor
+  file exists). The value column must NOT be transformed.
+
+  ---
+
+# NOTE: inert at max_instances: 2. The consolidator only runs at >= 3 instances
+# (dlab/js/parallel-agents.ts:406), so with two preparers the orchestrator reads both
+# summary.md files itself. Kept so the config stays valid if the count is ever raised.
+summarizer_prompt: |
+  You are a consolidator agent with READ-ONLY access.
+
+  Read ONLY these exact summary files (do NOT search or use glob - the paths are provided above):
+  {summary_paths}
+
+  Create a consolidated comparison of the data preparation approaches and write it to the output path provided above:
+
+  1. **Column identification**: did all approaches agree on series id, date and value columns and on the regressor columns?
+  2. **Data quality**: differences in detected duplicates, gaps, outliers, level shifts, short series.
+  3. **Cleaning applied**: differences in gap handling, dropped series or rows, regressor alignment; flag any transform of the value column.
+  4. **Files**: absolute path of each approach's cleaned_series.parquet and cleaned_regressors.parquet.
+
+  Present facts only - do NOT pick a winner.

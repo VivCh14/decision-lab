@@ -1,11 +1,26 @@
 """Command line entry point used by the agent tools: ``python -m tsf_lib.cli <command> --args '<json>'``.
 
-Every command prints one JSON document to stdout and reads/writes files in
-``work_dir`` (default: current directory):
+Every command prints one JSON document to stdout. Shared inputs
+(``analysis.parquet``, ``regressor_lags.parquet``, ``inputs.json``) are read from
+``work_dir`` (default: current directory). Outputs are written to ``output_dir``,
+which defaults to a purpose-named subdirectory so a session root stays readable:
 
-    analysis.parquet, regressor_lags.parquet, backtest_<model>.parquet,
-    forecast_<model>.parquet, scores.parquet, metrics.parquet, selection.parquet,
-    final_forecast.parquet, inputs.json (remembered data-file settings).
+==================  ====================================================
+``output_dir``      Files
+==================  ====================================================
+``backtests/``      ``backtest_<model>.parquet``
+``forecasts/``      ``forecast_<model>.parquet``
+``scoring/``        ``scores.parquet``, ``metrics.parquet``
+``selection/``      ``selection.parquet``, ``final_forecast.parquet``
+==================  ====================================================
+
+Every returned path is **absolute**. Agents must be able to copy a path straight
+into the next call or into ``summary.md``; when the paths were relative, one modeler
+joined ``backtests/...`` to the shared ``work_dir`` instead of its own instance
+directory and reported a file the orchestrator could not find.
+
+Parallel instances pass ``output_dir`` explicitly to keep their own files.
+Commands that consume model outputs take explicit file paths.
 """
 
 import argparse
@@ -20,11 +35,13 @@ from .backtest import (
     DIVERGENCE_PCT_MAX,
     ESS_MIN,
     NONCONVERGED_SHARE_MAX,
+    implausible_rows,
     RHAT_MAX,
     score_backtest,
 )
 from .metrics import compute_metrics, nonconverged_folds
 from .modal_runner import estimate_seconds, execute_batches, local_workers, should_run_locally
+from .report import build_report
 from .runner import (
     combine,
     default_batch_size,
@@ -48,6 +65,35 @@ INPUT_KEYS = (
 
 def _work_dir(args: dict[str, Any]) -> Path:
     return Path(args.get("work_dir", "."))
+
+
+def _out_dir(args: dict[str, Any], default: str) -> Path:
+    """Resolve the output directory, defaulting to a purpose-named subdirectory.
+
+    Parameters
+    ----------
+    args : dict[str, Any]
+        Call arguments; ``output_dir`` overrides the default when given.
+    default : str
+        Subdirectory used when the caller does not pass ``output_dir``. Keeping
+        the default a named directory rather than ``"."`` is what stops a session
+        from piling every parquet file into the working directory root.
+
+    Returns
+    -------
+    Path
+        The directory, created if missing.
+    """
+    path = Path(args.get("output_dir", default))
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _read_backtests(args: dict[str, Any]) -> pd.DataFrame:
+    files = args.get("backtest_files")
+    if not files:
+        raise ValueError("backtest_files is required: a list of backtest parquet paths.")
+    return pd.concat([read_table(Path(f)) for f in files], ignore_index=True)
 
 
 def _inputs(args: dict[str, Any]) -> dict[str, Any]:
@@ -183,19 +229,28 @@ def _model_batches(args: dict[str, Any], forecast: bool) -> tuple[list[dict[str,
 
 
 def cmd_run_model(args: dict[str, Any], forecast: bool) -> dict[str, Any]:
-    work = _work_dir(args)
+    out_dir = _out_dir(args, "forecasts" if forecast else "backtests")
     batches, n_series = _model_batches(args, forecast)
     results, backend = execute_batches(batches)
     result = combine(results, "result")
     kind = "forecast" if forecast else "backtest"
     suffix = "_dev" if args.get("dev") else ""
-    path = work / f"{kind}_{args['model_name']}{suffix}.parquet"
+    path = out_dir / f"{kind}_{args['model_name']}{suffix}.parquet"
     write_table(result, path)
-    out: dict[str, Any] = {"backend": backend, "file": str(path), "n_series": n_series, "n_rows": len(result)}
+    out: dict[str, Any] = {"backend": backend, "file": str(path.resolve()), "n_series": n_series, "n_rows": len(result)}
+    bad = implausible_rows(result)
+    if len(bad):
+        out["implausible_mean_rows"] = len(bad)
+        out["implausible_mean_series"] = sorted(bad["series_id"].astype(str).unique())[:20]
     if "error" in result.columns:
         errors = result[result["error"].notna()]
         out["n_error_rows"] = len(errors)
         out["errors"] = errors["error"].astype(str).str.slice(0, 200).value_counts().head(5).to_dict()
+        if len(result) and len(errors) == len(result):
+            out["failed"] = (
+                f"every row failed ({len(errors)}/{len(result)}): the {kind} produced no usable "
+                "output. Fix the model and re-run; do not score this file."
+            )
     return out
 
 
@@ -208,11 +263,9 @@ def cmd_estimate(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def cmd_score(args: dict[str, Any]) -> dict[str, Any]:
-    work = _work_dir(args)
     suffix = "_dev" if args.get("dev") else ""
-    backtest = pd.concat([read_table(work / f"backtest_{m}{suffix}.parquet") for m in args["models"]], ignore_index=True)
-    scores = score_backtest(backtest)
-    path = work / f"scores{suffix}.parquet"
+    scores = score_backtest(_read_backtests(args))
+    path = _out_dir(args, "scoring") / f"scores{suffix}.parquet"
     write_table(scores, path)
     by_model = scores.groupby("model")["smape"].agg(["count", "mean", "median"]).round(3).reset_index()
     by_model["median_smape_on_median_forecast"] = scores.groupby("model")["smape_median"].median().round(3).to_numpy()
@@ -237,7 +290,7 @@ def cmd_score(args: dict[str, Any]) -> dict[str, Any]:
             )
     worst = scores.sort_values("smape", ascending=False)
     return {
-        "scores_file": str(path),
+        "scores_file": str(path.resolve()),
         "vs_baseline_same_series": vs_baseline,
         "by_model": by_model.to_dict(orient="records"),
         "folds_by_model": folds.reset_index().to_dict(orient="records"),
@@ -254,40 +307,44 @@ def cmd_score(args: dict[str, Any]) -> dict[str, Any]:
 def cmd_metrics(args: dict[str, Any]) -> dict[str, Any]:
     work = _work_dir(args)
     suffix = "_dev" if args.get("dev") else ""
-    backtest = pd.concat([read_table(work / f"backtest_{m}{suffix}.parquet") for m in args["models"]], ignore_index=True)
+    backtest = _read_backtests(args)
     series, _ = _load(_inputs(args))
     analysis = read_table(work / "analysis.parquet") if (work / "analysis.parquet").exists() else None
     metrics = compute_metrics(backtest, series, analysis)
-    path = work / f"metrics{suffix}.parquet"
+    path = _out_dir(args, "scoring") / f"metrics{suffix}.parquet"
     write_table(metrics, path)
     columns = [c for c in ("wape", "bias", "mase", "coverage", "interval_score") if c in metrics.columns]
     by_model = metrics.groupby("model")[columns].median().round(4).reset_index().to_dict(orient="records")
     bad = nonconverged_folds(backtest)
     return {
-        "metrics_file": str(path),
+        "metrics_file": str(path.resolve()),
         "median_by_model": by_model,
         "nonconverged_folds_by_model": bad.groupby("model").size().to_dict(),
     }
 
 
 def cmd_select(args: dict[str, Any]) -> dict[str, Any]:
-    work = _work_dir(args)
-    scores = read_table(work / "scores.parquet")
+    work, out_dir = _work_dir(args), _out_dir(args, "selection")
+    scores = read_table(Path(args["scores_file"]))
     analysis = read_table(work / "analysis.parquet")
     selection = select_models(scores, analysis, args.get("by", "demand_class"), args.get("metric", "smape"))
-    write_table(selection, work / "selection.parquet")
+    write_table(selection, out_dir / "selection.parquet")
     out: dict[str, Any] = {
-        "selection_file": str(work / "selection.parquet"),
+        "selection_file": str((out_dir / "selection.parquet").resolve()),
         "by_segment": _records(
             selection.drop_duplicates("segment")[["segment", "model", "metric", "segment_median_smape"]], 100
         ),
     }
-    forecasts = {m: read_table(work / f"forecast_{m}.parquet") for m in args.get("models", []) if (work / f"forecast_{m}.parquet").exists()}
-    if forecasts:
+    if args.get("forecast_files"):
+        frames = [read_table(Path(f)) for f in args["forecast_files"]]
+        forecasts = {str(frame["model"].iloc[0]): frame for frame in frames}
         final = assemble_forecast(forecasts, selection)
-        write_table(final, work / "final_forecast.parquet")
-        out["final_forecast_file"] = str(work / "final_forecast.parquet")
+        write_table(final, out_dir / "final_forecast.parquet")
+        out["final_forecast_file"] = str((out_dir / "final_forecast.parquet").resolve())
         out["final_forecast_rows"] = len(final)
+        bad = implausible_rows(final)
+        if len(bad):
+            out["implausible_mean_series"] = sorted(bad["series_id"].astype(str).unique())[:20]
     return out
 
 
@@ -299,6 +356,37 @@ def cmd_fetch(args: dict[str, Any]) -> dict[str, Any]:
         df = df[args["columns"]]
     limit = int(args.get("limit", DEFAULT_LIMIT))
     return {"file": args["file"], "n_rows_total": len(df), "rows": _records(df, limit)}
+
+
+def cmd_report(args: dict[str, Any]) -> dict[str, Any]:
+    """Build the numbered report figures and ``report_summary.json``."""
+    work = _work_dir(args)
+
+    def _resolve(value: str) -> str:
+        path = Path(value)
+        return str(path if path.is_absolute() or path.exists() else work / path)
+
+    summary = build_report(
+        selection_file=_resolve(args["selection_file"]),
+        scores_file=_resolve(args["scores_file"]),
+        metrics_file=_resolve(args["metrics_file"]),
+        series_file=_resolve(args["series_file"]),
+        backtest_files=[_resolve(f) for f in args.get("backtest_files", [])],
+        forecast_files=[_resolve(f) for f in args.get("forecast_files", [])],
+        output_dir=args.get("output_dir", "report_figures"),
+        top_n=int(args.get("top_n", 3)),
+        baseline=args.get("baseline", "seasonal_naive"),
+    )
+    # Keep the tool output small: the per-series records live in the JSON file.
+    return {
+        "summary_file": summary["summary_file"],
+        "figures": summary["figures"],
+        "segments": summary["segments"],
+        "models": summary["models"],
+        "n_series_beating_baseline": summary.get("n_series_beating_baseline"),
+        "n_series_compared_to_baseline": summary.get("n_series_compared_to_baseline"),
+        "pooled_accuracy_by_segment": summary["pooled_accuracy_by_segment"],
+    }
 
 
 COMMANDS = {
@@ -313,6 +401,7 @@ COMMANDS = {
     "metrics": cmd_metrics,
     "select": cmd_select,
     "fetch": cmd_fetch,
+    "report": cmd_report,
 }
 
 
@@ -321,8 +410,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=sorted(COMMANDS))
     parser.add_argument("--args", default="{}", help="JSON object with the command arguments.")
     parsed = parser.parse_args(argv)
-    print(json.dumps(COMMANDS[parsed.command](json.loads(parsed.args)), default=str, indent=2))
-    return 0
+    result = COMMANDS[parsed.command](json.loads(parsed.args))
+    print(json.dumps(result, default=str, indent=2))
+    # A command that produced nothing usable must not look like success. The JSON
+    # is still printed so the caller can read the error histogram.
+    return 1 if isinstance(result, dict) and result.get("failed") else 0
 
 
 if __name__ == "__main__":

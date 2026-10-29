@@ -1,13 +1,13 @@
 import { tool } from "@opencode-ai/plugin"
 
 export default tool({
-  description: `Score backtests by sMAPE per series and model. Writes scores.parquet (scores_dev.parquet with dev=true) and returns per-model count/mean/median, fold and convergence counts, a same-series comparison against the baseline model (vs_baseline_same_series, on both mean- and median-forecast sMAPE) and the worst series.`,
+  description: `Score backtests by sMAPE per series and model. Writes scores.parquet (scores_dev.parquet with dev=true) to output_dir and returns per-model count/mean/median, fold and convergence counts, a same-series comparison against the baseline model (vs_baseline_same_series, on both mean- and median-forecast sMAPE) and the worst series.`,
 
   args: {
-    models: tool.schema.array(tool.schema.string()).describe("Model names whose backtest files to score"),
+    backtest_files: tool.schema.array(tool.schema.string()).describe("Paths of the backtest parquet files to use (one per model, e.g. from run-models)"),
     baseline: tool.schema.string().optional().describe("Baseline model name for the same-series comparison (default seasonal_naive)"),
-    dev: tool.schema.boolean().optional().describe("Score the _dev backtest files"),
-    work_dir: tool.schema.string().optional().describe("Directory for the output parquet files (default: current directory)"),
+    dev: tool.schema.boolean().optional().describe("Mark as development scoring (scores_dev.parquet)"),
+    output_dir: tool.schema.string().optional().describe("Directory for output files (default: scoring/ under the current directory). Parallel instances should pass their own instance directory."),
   },
 
   async execute(args) {

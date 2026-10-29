@@ -1,0 +1,27 @@
+# Conda environment mirroring docker/Dockerfile, for running the pytest suite
+# outside the container. The pack itself always runs in Docker; this exists so
+# `pytest tests/` works on a host that has no pandas.
+#
+#   conda env create -f environment.yaml
+#   conda activate tsf-testing
+#   PYTHONPATH=docker:opencode/skills/timeseries-forecasting/references python -m pytest tests -q
+name: tsf-testing
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy=2.1.3
+  - pandas=2.2.3
+  - matplotlib
+  - pyyaml
+  - pip
+  - pip:
+      - scipy==1.15.3
+      - statsmodels==0.15.0
+      - pymc==6.3.2
+      - pytensor==3.3.4
+      - arviz==1.3.0
+      - nutpie==0.16.11
+      - pyarrow==21.0.0
+      - modal==1.3.2
+      - pytest

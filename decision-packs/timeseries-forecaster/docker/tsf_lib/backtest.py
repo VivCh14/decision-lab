@@ -339,3 +339,18 @@ def score_backtest(backtest: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def implausible_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return forecast rows whose mean lies outside their own prediction interval.
+
+    A mean outside the interval signals heavy-tail blow-ups or broken back-transforms.
+
+    Parameters
+    ----------
+    frame : pd.DataFrame
+        Forecast or backtest table with ``forecast_mean``, ``forecast_lower``, ``forecast_upper``.
+    """
+    has_interval = frame["forecast_lower"].notna() & frame["forecast_upper"].notna()
+    outside = (frame["forecast_mean"] < frame["forecast_lower"]) | (frame["forecast_mean"] > frame["forecast_upper"])
+    return frame[has_interval & outside]

@@ -4,7 +4,9 @@ Batch time series analysis, Bayesian backtesting, model selection and forecastin
 
 - **Input** (`--data`): a series file `(series_id, date, value)` and, optionally, a long regressor file `(series_id, regressor_name, date, value)`; `.csv` or `.parquet`. Column names are given in the prompt.
 - **Compute**: `tsf_lib.modal_runner` splits series into batches and runs them in ONE call per tool invocation: `modal.Function.map` on the `tsf-runner` app (`docker/modal_app/tsf_runner.py`), or a local process pool when `DLAB_FIT_MODEL_LOCALLY=1` or `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` are unset. `DLAB_TSF_WORKERS` sets the local pool size. The `deploy_modal.sh` pre-run hook deploys the app.
-- **Output** (in the work dir): `analysis.parquet`, `regressor_lags.parquet`, `backtest_<model>.parquet` (forecast next to actual), `forecast_<model>.parquet`, `scores.parquet`, `selection.parquet`, `final_forecast.parquet`.
+- **Workflow** (MMM-style): the orchestrator explores the data, runs 2 `data-preparer` instances in parallel (different models; they must not transform the value column), analyses the cleaned data, runs the baseline itself, then fans out `modeler` instances (one model family each) in parallel. Modelers keep their model file, backtest/forecast parquet files and `summary.md` in their own instance directory; the orchestrator reads them by absolute path.
+- **Output**: orchestrator directory: `data_summary.md`, `data_preparation_decision.md`, `analysis.parquet`, `regressor_lags.parquet`, `scores.parquet`, `metrics.parquet`, `selection.parquet`, `final_forecast.parquet`, reports and figures. Per modeler instance: `<model>.py`, `backtest_<model>.parquet`, `forecast_<model>.parquet`, `summary.md`.
+- **Tools** take explicit file paths (`backtest_files`, `scores_file`, `forecast_files`); `output_dir` defaults to the current directory. They return JSON objects (`{error, stderr, stdout}` on failure).
 - **Evaluation**: sMAPE; the backtest file supports any other metric.
 
 ## Run
@@ -12,7 +14,7 @@ Batch time series analysis, Bayesian backtesting, model selection and forecastin
 ```bash
 cp .env.example .env   # optional: Modal tokens; model-provider credentials
 dlab run --dpack decision-packs/timeseries-forecaster --env-file .env \
-  --data example-data/series.csv example-data/regressors.csv \
+  --data example-data/series.csv --data example-data/regressors.csv \
   --prompt "Series file series.csv (series_id, date, value), regressors regressors.csv, horizon 6, rolling backtest."
 ```
 
@@ -21,7 +23,7 @@ Add `DLAB_FIT_MODEL_LOCALLY=1` to force the local pool. `example-data/make_examp
 ## Tests
 
 ```bash
-python -m pytest decision-packs/timeseries-forecaster/tests -v
+see tests/README.md
 ```
 
 The suite covers analysis, regressors, backtesting, sampling, batching and the local process-pool pipeline end to end. The Modal path (`modal_runner._run_modal`, `modal_app/tsf_runner.py`) is not exercised without a Modal account.

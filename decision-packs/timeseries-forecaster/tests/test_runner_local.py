@@ -30,7 +30,7 @@ def small_series(tmp_path: Path) -> Path:
 
 
 def run(command: str, work: Path, **args: object) -> dict:
-    return cli.COMMANDS[command]({"work_dir": str(work), **args})
+    return cli.COMMANDS[command]({"work_dir": str(work), "output_dir": str(work), **args})
 
 
 def test_split_batches_covers_all_ids_once() -> None:
@@ -85,13 +85,13 @@ def test_full_pipeline_with_process_pool(small_series: Path, tmp_path: Path) -> 
 
     backtest = run("backtest", work, **common, n_folds=2, step=3, batch_size=2)
     assert backtest["n_series"] == 4 and backtest["n_rows"] > 0
-    scores = run("score", work, models=["snaive"])
+    scores = run("score", work, backtest_files=[str(work / "backtest_snaive.parquet")])
     assert scores["by_model"][0]["count"] == 4
 
     forecast = run("forecast", work, **common)
     assert (work / "forecast_snaive.parquet").exists() and forecast["n_rows"] == 4 * 6
 
-    selected = run("select", work, models=["snaive"], by="demand_class")
+    selected = run("select", work, scores_file=str(work / "scores.parquet"), forecast_files=[str(work / "forecast_snaive.parquet")], by="demand_class")
     assert selected["final_forecast_rows"] == 4 * 6
     fetched = run("fetch", work, file="scores.parquet", limit=2)
     assert len(fetched["rows"]) == 2
@@ -130,3 +130,72 @@ def test_regressors_flow_into_analysis_json(small_series: Path, tmp_path: Path) 
     payload = json.loads(batches[0]["items"][0]["analysis_json"])
     assert {e["regressor_name"] for e in payload["regressor_lags"]} <= set(lags["regressor_name"])
     assert payload["regressor_lags"]
+
+
+def test_cli_returns_absolute_paths(tmp_path, monkeypatch):
+    """Every path a tool hands back must be absolute.
+
+    Agents copy these straight into the next call or into summary.md. When they
+    were relative, one modeler joined ``backtests/...`` to the shared work_dir
+    instead of its own instance directory and reported a file the orchestrator
+    could not find, so a clean plan looked like a failure.
+    """
+    import json
+    import pandas as pd
+    from tsf_lib import cli
+    from tsf_lib.analysis import analyze_series
+    from tsf_lib.regressors import REGRESSOR_COLUMNS
+
+    def build_analysis(frame):
+        rows = [analyze_series(g, sid) for sid, g in frame.groupby("series_id")]
+        return pd.DataFrame(rows)
+
+    dates = pd.date_range("2020-01-31", periods=40, freq="ME")
+    series = pd.DataFrame([
+        {"series_id": sid, "date": d, "value": 100.0 + i}
+        for sid in ("s0", "s1") for i, d in enumerate(dates)
+    ])
+    series_file = tmp_path / "series.parquet"
+    series.to_parquet(series_file, index=False)
+
+    model = tmp_path / "m.py"
+    model.write_text(
+        "import pandas as pd\n"
+        "def fit_forecast(train, future_dates, regressors, analysis, params):\n"
+        "    last = float(train['value'].iloc[-1])\n"
+        "    return pd.DataFrame({'forecast_mean': [last] * len(future_dates)})\n"
+    )
+
+    # cmd_run_model reads these from work_dir (the cwd here).
+    analysis = build_analysis(series)
+    analysis.to_parquet(tmp_path / "analysis.parquet", index=False)
+    pd.DataFrame(columns=list(REGRESSOR_COLUMNS)).to_parquet(
+        tmp_path / "regressor_lags.parquet", index=False
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DLAB_FIT_MODEL_LOCALLY", "1")
+    monkeypatch.setenv("DLAB_TSF_WORKERS", "1")
+
+    args = {
+        "series_file": str(series_file), "series_id_col": "series_id",
+        "date_col": "date", "value_col": "value",
+        "model_file": str(model), "model_name": "m",
+        "horizon": 3, "n_folds": 2, "step": 1,
+    }
+    backtest = cli.cmd_run_model(dict(args), forecast=False)
+    assert Path(backtest["file"]).is_absolute(), backtest["file"]
+    assert Path(backtest["file"]).exists()
+    # Default lands in backtests/, not the working directory root.
+    assert Path(backtest["file"]).parent.name == "backtests"
+
+    scored = cli.cmd_score({"backtest_files": [backtest["file"]], "baseline": "m"})
+    assert Path(scored["scores_file"]).is_absolute(), scored["scores_file"]
+    assert Path(scored["scores_file"]).parent.name == "scoring"
+
+    forecast = cli.cmd_run_model(dict(args), forecast=True)
+    assert Path(forecast["file"]).is_absolute(), forecast["file"]
+    assert Path(forecast["file"]).parent.name == "forecasts"
+
+    # The JSON the tool actually prints must carry the absolute path too.
+    assert str(tmp_path) in json.dumps(backtest, default=str)

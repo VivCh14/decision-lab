@@ -7,6 +7,7 @@ import pandas as pd
 
 SHIFT_SIGMA = 5.0
 MIN_POINTS = 8
+BOUND_FACTOR = 10.0
 
 
 def _robust_sigma(x: np.ndarray) -> float:
@@ -114,3 +115,33 @@ def trim_to_level_shift(train: pd.DataFrame, recommended: dict[str, Any]) -> pd.
         return train
     kept = train[pd.to_datetime(train["date"]) >= pd.Timestamp(start)]
     return kept.reset_index(drop=True) if len(kept) >= int(recommended.get("min_train_size") or MIN_POINTS) else train
+
+
+def bound_draws(draws: np.ndarray, history: np.ndarray, factor: float = BOUND_FACTOR) -> np.ndarray:
+    """Clip predictive draws to a plausible range around the observed history.
+
+    Heavy-tailed likelihoods followed by an exponential back-transform can produce
+    astronomically large draws that wreck the mean forecast. Draws are limited to
+    ``factor`` observed ranges beyond the observed min and max (never below zero when
+    the history is non-negative).
+
+    Parameters
+    ----------
+    draws : np.ndarray
+        Predictive draws on the original scale.
+    history : np.ndarray
+        Observed training values.
+    factor : float
+        Number of observed ranges allowed beyond the observed extremes.
+
+    Returns
+    -------
+    np.ndarray
+        Clipped draws with the same shape.
+    """
+    low, high = float(np.min(history)), float(np.max(history))
+    span = (high - low) or max(abs(high), 1.0)
+    lower = low - factor * span
+    if low >= 0:
+        lower = max(lower, 0.0)
+    return np.clip(draws, lower, high + factor * span)

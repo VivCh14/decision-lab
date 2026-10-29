@@ -13,7 +13,8 @@ export default tool({
     series_ids: tool.schema.array(tool.schema.string()).optional().describe("Restrict to these series (default: all)"),
     batch_size: tool.schema.number().optional().describe("Series per batch (default: chosen automatically)"),
     dev: tool.schema.boolean().optional().describe("Mark as development run (adds _dev to the file name)"),
-    work_dir: tool.schema.string().optional().describe("Directory for the output parquet files (default: current directory)"),
+    output_dir: tool.schema.string().optional().describe("Directory for output files (default: backtests/ under the current directory). Parallel instances should pass their own instance directory."),
+    work_dir: tool.schema.string().optional().describe("Directory holding analysis.parquet and inputs.json, normally the orchestrator directory (default: current directory)"),
   },
 
   async execute(args) {
